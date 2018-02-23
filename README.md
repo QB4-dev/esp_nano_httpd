@@ -14,7 +14,7 @@ __esp_nano_httpd__ will help you ( ͡° ͜ʖ ͡°)
 Thats all - its only simple and robust webserver. If you need more features like image hosting, web sockets and so on use fantastic libesphttpd by Sprite_tm.
 
 ## OK I like it, it's enough for me. How to use it?
-1. Copy __esp_nano_httpd__ and __html__ directory into your project source directory.
+1. Copy __esp_nano_httpd__ directory into your project source tree.
 
 2. Add __esp_nano_httpd__ module to be compiled in __Makefile__ (I recommend to use [this Makefile template for NONOS SDK projects](https://gist.github.com/QB4-dev/4081a836f87c80fa66e3dfd521e8ad5a))
 
@@ -43,7 +43,7 @@ MODULES	= driver user esp_nano_httpd
 If you ever tried manually include HTML code inside C file you know the pain when you mixing two programming languages - all damn backslashes before quotation marks, no web browser preview, etc. (╯°□°）╯︵ ┻━┻  
 Not this time... I'll show you the trick ( ͡~ ͜ʖ ͡°)  
 ...  
-Go to __html__ directory. Add there your html files. You will find small and handy shell script __gen_includes.sh__
+Copy __html__ directory from [esp_nano_httpd_basic_example](https://github.com/QB4-dev/esp_nano_httpd_basic_example). Add there your own html files. You will find small and handy shell script __gen_includes.sh__
 It will create C header files in __include__ directory from your html files by using Linux __xxd__ tool. Just use it!
 
 6. Okay. We have our html content easy to include into C code, and __esp_nano_httpd__ . Lets connect them together.  
@@ -165,11 +165,10 @@ This example callback is used to change wifi station settings:
 void ICACHE_FLASH_ATTR wifi_config_cb(struct espconn *conn, http_request_t *req, void *arg, uint32_t len)
 {
     struct station_config station_conf = {0};
-    static os_timer_t reboot_timer;
     char *param;
 
     //We only handle POST requests
-    if(req->type != TYPE_POST || req->content == NULL){    
+    if(req->type != TYPE_POST || req->content == NULL){
         resp_http_error(conn);
         return;
     }
@@ -184,9 +183,11 @@ void ICACHE_FLASH_ATTR wifi_config_cb(struct espconn *conn, http_request_t *req,
     } while( (param=strtok(NULL,"&")) != NULL);
 
     station_conf.bssid_set = 0;               //do not look for specific router MAC address
+    wifi_station_set_auto_connect(0);		  //disable autoconnect
     wifi_station_set_config(&station_conf);   //save new WiFi settings
+    wifi_station_connect();					  //connect to network
 
-    send_html(conn, wifi_connect_html, sizeof(wifi_connect_html)); //show HTML page
+    send_html(conn, req, wifi_connect_html, sizeof(wifi_connect_html)); //show HTML page
 }
 ```  
 Next we need to add the `<form>` in our __index.html__ file to get WiFi SSID and password:
@@ -203,11 +204,11 @@ password<br>
 
 When function is ready all you need to do is to connect it to path in __url_config__ in __user_main.c__
 ```c
-const http_callback_t url_conf[] = {
-    {"/", send_html, index_html, sizeof(index_html)},
-    {"/about", send_html, about_html, sizeof(about_html)},
-    {"/wifi_conf", wifi_config_cb, NULL, 0 },
-    {0,0,0,0} //last item always 0
+const http_callback_t url_cfg[] = {
+	{"/", send_html, index_html, sizeof(index_html)},
+	{"/demo", led_demo_cb, NULL, 0},
+	{"/wifi_conf", wifi_config_cb, NULL, 0 },
+	{0,0,0}
 };
 ```
 

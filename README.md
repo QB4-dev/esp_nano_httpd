@@ -169,7 +169,7 @@ void ICACHE_FLASH_ATTR wifi_config_cb(struct espconn *conn, http_request_t *req,
     char *param;
 
     //We only handle POST requests
-        if(req->type != TYPE_POST || req->content == NULL){    
+    if(req->type != TYPE_POST || req->content == NULL){    
         resp_http_error(conn);
         return;
     }

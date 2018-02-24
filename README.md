@@ -113,7 +113,7 @@ and/or
 - `const char *cont` - pointer to response content 
 - `uint32_t cont_len` - response content length
 
-`void send_html(struct espconn *conn, http_request_t *req, void *arg, uint32_t len)` - send HTML page(basic callback function - more details below)
+`void send_html(struct espconn *conn, void *arg, uint32_t len)` - send HTML page(basic callback function - more details below)
 
 `void resp_http_ok(struct espconn *conn)` - send HTTP OK status(status code: 200)
 
@@ -128,8 +128,9 @@ Until now We know how to use __esp_nano_httpd__ to send our html files only. Her
 
 All callback functions should be designed like:
 ```c
-void ICACHE_FLASH_ATTR http_callback_fun(struct espconn *conn, http_request_t *req, void *arg, uint32_t len)
+void ICACHE_FLASH_ATTR http_callback_fun(struct espconn *conn, void *arg, uint32_t len)
 {
+	http_request_t *req = conn->reverse; //get parsed request
 }
 ```
 Input arguments:
@@ -166,7 +167,9 @@ void ICACHE_FLASH_ATTR wifi_config_cb(struct espconn *conn, http_request_t *req,
 {
     struct station_config station_conf = {0};
     char *param;
-
+    
+    http_request_t *req = conn->reverse;
+    if(req == NULL)return;
     //We only handle POST requests
     if(req->type != TYPE_POST || req->content == NULL){
         resp_http_error(conn);
@@ -187,7 +190,7 @@ void ICACHE_FLASH_ATTR wifi_config_cb(struct espconn *conn, http_request_t *req,
     wifi_station_set_config(&station_conf);   //save new WiFi settings
     wifi_station_connect();					  //connect to network
 
-    send_html(conn, req, wifi_connect_html, sizeof(wifi_connect_html)); //show HTML page
+    send_html(conn, wifi_connect_html, sizeof(wifi_connect_html)); //show HTML page
 }
 ```  
 Next we need to add the `<form>` in our __index.html__ file to get WiFi SSID and password:

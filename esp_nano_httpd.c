@@ -30,6 +30,9 @@ SOFTWARE.*/
 	#define ESP_NANO_HTTPD_AP_NAME	"ESP-DEV"
 #endif
 
+#define NHTTPD_DEBUG
+#define NHTTPD_DEBUG_REQ
+
 #ifdef  NHTTPD_DEBUG
 #define NANO_HTTPD_DBG(fmt, args...)    os_printf(fmt, ## args)
 #else
@@ -83,7 +86,7 @@ void ICACHE_FLASH_ATTR send_http_response(struct espconn *conn, const char *code
 
 	content_len = (content != NULL)?(cont_len):(0);
 
-	http_response_len = strlen(header)+strlen(code)+strlen(cont_type)+10+content_len+1; //10 for content length string
+	http_response_len = strlen(header)+strlen(code)+strlen(cont_type)+16+content_len; //16 for content length string
 	http_response_buff = (char *)os_malloc(http_response_len);
 
 	if(http_response_buff == NULL) return;
@@ -94,10 +97,8 @@ void ICACHE_FLASH_ATTR send_http_response(struct espconn *conn, const char *code
 	if( content_len > 0 )
 		memcpy(http_response_buff+header_len, content, content_len);
 
-	http_response_buff[header_len+content_len] = 0; //NULL terminated
-	http_response_len = strlen(http_response_buff);
+	http_response_len = header_len+content_len;
 
-	NANO_HTTPD_DBG_REQ("request response: %s\n", http_response_buff);
 	os_timer_disarm(&http_resp_tx_timer);
 	os_timer_setfn(&http_resp_tx_timer, (os_timer_func_t *)http_resp_chunk_tx, conn);
 	os_timer_arm (&http_resp_tx_timer, 10, 1);
@@ -117,7 +118,7 @@ void ICACHE_FLASH_ATTR resp_http_error(struct espconn *conn) {
 	send_http_response(conn, "500 Internal Error", "text/html",content,strlen(content));
 }
 
-void ICACHE_FLASH_ATTR send_html(struct espconn *conn, http_request_t *req, void *arg, uint32_t len){
+void ICACHE_FLASH_ATTR send_html(struct espconn *conn, void *arg, uint32_t len){
 	send_http_response(conn, "200 OK","text/html", arg, len);
 }
 
@@ -198,7 +199,7 @@ static void ICACHE_FLASH_ATTR receive_cb(void *arg, char *pdata, unsigned short 
 	const http_callback_t *url;
 
 	NANO_HTTPD_DBG("got new request. Free heap size: %d\n", system_get_free_heap_size());
-	NANO_HTTPD_DBG_REQ("request:\n %s\n", pdata);
+	NANO_HTTPD_DBG_REQ("request:\n%s\n", pdata);
 
 	http_request_t *req = (http_request_t *)conn->reverse;
 
@@ -219,7 +220,7 @@ static void ICACHE_FLASH_ATTR receive_cb(void *arg, char *pdata, unsigned short 
 	for(url = url_config; url->path != NULL; url++){
 		if( strcmp(req->path,url->path) == 0 ){
 			NANO_HTTPD_DBG("url: %s found\n", req->path);
-			if(url->handler__ != NULL) (*url->handler__)(conn, req, url->arg, url->arg_len);
+			if(url->handler__ != NULL) (*url->handler__)(conn, url->arg, url->arg_len);
 			return;//request handled
 		}
 	}

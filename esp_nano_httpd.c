@@ -30,8 +30,8 @@ SOFTWARE.*/
 	#define ESP_NANO_HTTPD_AP_NAME	"ESP-DEV"
 #endif
 
-#define NHTTPD_DEBUG
-#define NHTTPD_DEBUG_REQ
+//#define NHTTPD_DEBUG
+//#define NHTTPD_DEBUG_REQ
 
 #ifdef  NHTTPD_DEBUG
 #define NANO_HTTPD_DBG(fmt, args...)    os_printf(fmt, ## args)

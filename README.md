@@ -128,7 +128,7 @@ Until now We know how to use __esp_nano_httpd__ to send our html files only. Her
 
 All callback functions should be designed like:
 ```c
-void ICACHE_FLASH_ATTR http_callback_fun(struct espconn *conn, void *arg, uint32_t len)
+void ICACHE_FLASH_ATTR http_callback_fun(struct espconn *conn, http_request_t *req, void *arg, uint32_t len)
 {
 	http_request_t *req = conn->reverse; //get parsed request
 }

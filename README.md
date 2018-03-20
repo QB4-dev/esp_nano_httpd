@@ -128,7 +128,7 @@ Until now We know how to use __esp_nano_httpd__ to send our html files only. Her
 
 All callback functions should be designed like:
 ```c
-void ICACHE_FLASH_ATTR http_callback_fun(struct espconn *conn, http_request_t *req, void *arg, uint32_t len)
+void ICACHE_FLASH_ATTR http_callback_fun(struct espconn *conn, void *arg, uint32_t len)
 {
 	http_request_t *req = conn->reverse; //get parsed request
 }
@@ -163,12 +163,12 @@ This example callback is used to change wifi station settings:
 ```c
 #include "../html/include/wifi_connect_html.h" //here is our wifi connection status page
 
-void ICACHE_FLASH_ATTR wifi_config_cb(struct espconn *conn, http_request_t *req, void *arg, uint32_t len)
+void ICACHE_FLASH_ATTR wifi_config_cb(struct espconn *conn, void *arg, uint32_t len)
 {
     struct station_config station_conf = {0};
     char *param;
     
-    http_request_t *req = conn->reverse;
+    http_request_t *req = conn->reverse; //get parsed request
     if(req == NULL)return;
     //We only handle POST requests
     if(req->type != TYPE_POST || req->content == NULL){

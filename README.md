@@ -49,7 +49,7 @@ It will create C header files in __include__ directory from your html files by u
 6. Okay. We have our html content easy to include into C code, and __esp_nano_httpd__ . Lets connect them together.  
 Create url config table inside your __user_main.c__ file:  
 ```c
-#include "../esp_nano_httpd/esp_nano_httpd.h //to use esp_nano_httpd"
+#include "../esp_nano_httpd/esp_nano_httpd.h" //to use esp_nano_httpd
 
 //include your html pages here
 #include "../html/include/index.h" 
@@ -151,6 +151,13 @@ typedef struct {
     const char* content_type;
     uint32_t content_len;
     void *content;
+	//things below are used for long requests that doesn't fit into read buffer
+    enum {							
+		REQ_GOT_HEADER		= 0,	//is returned when got request header
+		REQ_CONTENT_PART	= 1		//is returned when got part of request content
+	} read_state;	
+	uint32_t cont_part_len;			//length of content part
+	uint32_t cont_bytes_left;		//content bytes left to receive
 } http_request_t;
 ```
 

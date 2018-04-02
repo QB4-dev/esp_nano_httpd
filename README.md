@@ -151,13 +151,13 @@ typedef struct {
     const char* content_type;
     uint32_t content_len;
     void *content;
-	//things below are used for long requests that doesn't fit into read buffer
+    //things below are used for long requests that doesn't fit into read buffer
     enum {							
-		REQ_GOT_HEADER		= 0,	//is returned when got request header
-		REQ_CONTENT_PART	= 1		//is returned when got part of request content
-	} read_state;	
-	uint32_t cont_part_len;			//length of content part
-	uint32_t cont_bytes_left;		//content bytes left to receive
+        REQ_GOT_HEADER		= 0,	//is returned when got request header
+        REQ_CONTENT_PART	= 1		//is returned when got part of request content
+    } read_state;	
+    uint32_t cont_part_len;			//length of content part
+    uint32_t cont_bytes_left;		//content bytes left to receive
 } http_request_t;
 ```
 

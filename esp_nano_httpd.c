@@ -64,14 +64,13 @@ static void ICACHE_FLASH_ATTR http_resp_chunk_tx(struct espconn *conn)
 		espconn_disconnect(conn);
 		return;
 	}
-
-	if( 0 == espconn_sent(conn, (char*)&http_response_buff[http_response_pos], len) )
+	if( 0 == espconn_sent(conn, &http_response_buff[http_response_pos], len) )
 		http_response_pos+=len;
 }
 
 void ICACHE_FLASH_ATTR send_http_response(struct espconn *conn, const char *code, const char *cont_type, const char *content, uint32_t cont_len)
 {
-	char header[] = "HTTP/1.1 %s\r\n"
+	const char header[] = "HTTP/1.1 %s\r\n"
 			"Accept-Ranges: bytes\r\n"
 			"Content-Type: %s; charset=UTF-8\r\n"
 			"Content-Length: %i\r\n"
@@ -83,7 +82,6 @@ void ICACHE_FLASH_ATTR send_http_response(struct espconn *conn, const char *code
 		os_free(http_response_buff);
 		http_response_buff = NULL;
 	}
-
 	content_len = (content != NULL)?(cont_len):(0);
 
 	http_response_len = strlen(header)+strlen(code)+strlen(cont_type)+16+content_len; //16 for content length string
@@ -118,13 +116,13 @@ void ICACHE_FLASH_ATTR resp_http_error(struct espconn *conn) {
 	send_http_response(conn, "500 Internal Error", "text/html",content,strlen(content));
 }
 
-void ICACHE_FLASH_ATTR send_html(struct espconn *conn, void *arg, uint32_t len){
-	send_http_response(conn, "200 OK","text/html", arg, len);
+void ICACHE_FLASH_ATTR send_html(struct espconn *conn, void *html, uint32_t len){
+	send_http_response(conn, "200 OK","text/html", html, len);
 }
 
 static int ICACHE_FLASH_ATTR parse_http_request_header(http_request_t *req, char *data, unsigned short len){
 	char *type, *path, *query, *http_ver;
-	char *head_attr, *content_type, *content_len, *req_data;
+	char *head_attr, *content_type, *content_len, *req_content;
 
 	if( data == NULL ) goto unknown_request;
 
@@ -135,7 +133,6 @@ static int ICACHE_FLASH_ATTR parse_http_request_header(http_request_t *req, char
 		head_attr=head_attr+2;
 	} else
 		goto unknown_request;
-
 	//find tokens
 	type = strtok(data," ");
 	path = strtok(NULL," ");
@@ -165,19 +162,14 @@ static int ICACHE_FLASH_ATTR parse_http_request_header(http_request_t *req, char
 	} else
 		goto unknown_request;
 
-	//find header end
-	req_data = strstr(head_attr,"\r\n\r\n");
-	if(req_data != NULL){
-		memset(req_data,0,4);
-		if(req_data+4 == data+len)
-			return 0; //no more data expected
-		else
-			req->content=req_data+4;
-	}
 	//get request content information
 	content_type = strstr(head_attr,"Content-Type:");
-	content_len =  strstr(head_attr,"Content-Length:");
-
+	content_len  = strstr(head_attr,"Content-Length:");
+	req_content  = strstr(head_attr,"\r\n\r\n");
+	if(req_content != NULL){
+		memset(req_content,0,4);
+		req_content+=4; //skip  CR LF CR LF
+	}
 	if(content_type != NULL){
 		content_type = strtok(content_type,"\r\n");
 		req->content_type = strchr(content_type,':')+1;
@@ -185,7 +177,14 @@ static int ICACHE_FLASH_ATTR parse_http_request_header(http_request_t *req, char
 	if(content_len != NULL){
 		content_len = strtok(content_len,"\r\n");
 		req->content_len = atoi(strchr(content_len,':')+1);
+		req->cont_part_len = len - (req_content-data);
+		req->cont_bytes_left = req->content_len - req->cont_part_len;
 	}
+	//set content pointer
+	if(req_content == data+len)
+		req->content=0; //no data expected
+	else
+		req->content=req_content;
 	return 0;
 
 unknown_request:
@@ -196,24 +195,35 @@ unknown_request:
 static void ICACHE_FLASH_ATTR receive_cb(void *arg, char *pdata, unsigned short len)
 {
 	struct espconn *conn = (struct espconn *)arg;
-	const http_callback_t *url;
+	static const http_callback_t *recall_cb;
+	const  http_callback_t *url;
+	http_request_t *req;
 
-	NANO_HTTPD_DBG("got new request. Free heap size: %d\n", system_get_free_heap_size());
+	NANO_HTTPD_DBG("got new request. req len %d Free heap size: %d\n", len, system_get_free_heap_size());
 	NANO_HTTPD_DBG_REQ("request:\n%s\n", pdata);
 
-	http_request_t *req = (http_request_t *)conn->reverse;
+	if(conn == NULL || pdata == NULL) return;
 
-	if ( pdata == NULL || req == NULL )
+	req = (http_request_t *)conn->reverse;
+
+	if( req == NULL ) return;
+
+	if(req->cont_bytes_left > 0){ //not all content data received before, recall last callback
+		req->content = pdata;
+		req->cont_part_len = len;
+		req->cont_bytes_left = req->cont_bytes_left - len;
+		req->read_state = REQ_CONTENT_PART;
+
+		if(recall_cb != NULL)(*recall_cb->handler__)(conn, recall_cb->arg, recall_cb->arg_len);
 		return;
+	}
 
 	parse_http_request_header(req,pdata,len);
-
-	NANO_HTTPD_DBG("req type: %d \npath: %s\n query: %s\n content_type %s\n data %s\n",
-			req->type, req->path, req->query, req->content_type, req->content);
-
 	if(req->type == TYPE_UNKNOWN){
 		resp_http_error(conn);
 		return;
+	} else {
+		req->read_state = REQ_GOT_HEADER;
 	}
 
 	//try to find requested url in given url config
@@ -221,6 +231,7 @@ static void ICACHE_FLASH_ATTR receive_cb(void *arg, char *pdata, unsigned short 
 		if( strcmp(req->path,url->path) == 0 ){
 			NANO_HTTPD_DBG("url: %s found\n", req->path);
 			if(url->handler__ != NULL) (*url->handler__)(conn, url->arg, url->arg_len);
+			if(req->cont_bytes_left > 0) recall_cb = url; //not all content data received
 			return;//request handled
 		}
 	}
@@ -289,7 +300,9 @@ void ICACHE_FLASH_ATTR esp_nano_httpd_init(uint8_t wifi_mode){
 		default:
 			break;
 	}
+
 	conn = (struct espconn *)os_zalloc(sizeof(struct espconn));
+	if(conn == NULL) return;
 
 	espconn_create(conn);
 	espconn_regist_time(conn, 5, 0);

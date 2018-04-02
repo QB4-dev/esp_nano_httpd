@@ -44,7 +44,7 @@ devices visible as:
 */
 
 typedef struct {
-	enum req_type {
+	enum {
 		TYPE_UNKNOWN = 0,
 		TYPE_GET 	 = 1,
 		TYPE_POST 	 = 2
@@ -55,6 +55,12 @@ typedef struct {
 	const char* content_type;
 	uint32_t content_len;
 	void *content;
+	enum {
+		REQ_GOT_HEADER		= 0,
+		REQ_CONTENT_PART	= 1
+	} read_state;
+	uint32_t cont_part_len;
+	uint32_t cont_bytes_left;
 } http_request_t;
 
 typedef struct {

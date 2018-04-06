@@ -205,7 +205,6 @@ static void ICACHE_FLASH_ATTR receive_cb(void *arg, char *pdata, unsigned short 
 	if(conn == NULL || pdata == NULL) return;
 
 	req = (http_request_t *)conn->reverse;
-
 	if( req == NULL ) return;
 
 	if(req->cont_bytes_left > 0){ //not all content data received before, recall last callback
@@ -219,13 +218,9 @@ static void ICACHE_FLASH_ATTR receive_cb(void *arg, char *pdata, unsigned short 
 	}
 
 	parse_http_request_header(req,pdata,len);
-	if(req->type == TYPE_UNKNOWN){
-		resp_http_error(conn);
-		return;
-	} else {
-		req->read_state = REQ_GOT_HEADER;
-	}
+	if(req->type == TYPE_UNKNOWN) return resp_http_error(conn);
 
+	req->read_state = REQ_GOT_HEADER;
 	//try to find requested url in given url config
 	for(url = url_config; url->path != NULL; url++){
 		if( strcmp(req->path,url->path) == 0 ){
@@ -265,20 +260,42 @@ static void ICACHE_FLASH_ATTR connection_listener(void *arg)
 }
 
 
-void ICACHE_FLASH_ATTR esp_nano_httpd_register_content(const http_callback_t *content_info ){
+void ICACHE_FLASH_ATTR esp_nano_httpd_register_content(const http_callback_t *content_info )
+{
 	url_config = content_info;
 }
 
-/* initialize httpd server, use one of wifi modes defined in <user_interface.h> */
-void ICACHE_FLASH_ATTR esp_nano_httpd_init(uint8_t wifi_mode){
+
+void ICACHE_FLASH_ATTR esp_nano_httpd_init(void)
+{
+	struct espconn *conn;
+
+	conn = (struct espconn *)os_zalloc(sizeof(struct espconn));
+	if(conn == NULL) return;
+
+	espconn_create(conn);
+	espconn_regist_time(conn, 5, 0);
+
+	conn->type =  ESPCONN_TCP;
+	conn->state = ESPCONN_NONE;
+
+	conn->proto.tcp = (esp_tcp *)os_zalloc(sizeof(esp_tcp));
+	if(conn->proto.tcp == NULL)return;
+	conn->proto.tcp->local_port = 80;
+
+	espconn_regist_connectcb(conn, connection_listener);
+	espconn_accept(conn);
+
+	os_printf("nano httpd started\n");
+}
+
+/* initialize wifi and httpd. Use one of wifi modes defined in <user_interface.h> */
+void ICACHE_FLASH_ATTR esp_nano_httpd_init_AP(uint8_t wifi_mode)
+{
 	struct softap_config ap_config;
 	char mac[6];
 
-	struct espconn *conn;
-
-	switch(wifi_mode){
-		case SOFTAP_MODE:
-		case STATIONAP_MODE:
+	if(wifi_mode == SOFTAP_MODE || wifi_mode == STATIONAP_MODE){
 			wifi_get_macaddr(SOFTAP_IF, (unsigned char*)mac);
 			wifi_softap_get_config(&ap_config);
 
@@ -294,29 +311,7 @@ void ICACHE_FLASH_ATTR esp_nano_httpd_init(uint8_t wifi_mode){
 			wifi_set_opmode(NULL_MODE);
 			wifi_set_opmode(wifi_mode);
 			wifi_softap_set_config(&ap_config);
-			break;
-		case STATION_MODE: //only init connection listener
-			break;
-		default:
-			break;
 	}
-
-	conn = (struct espconn *)os_zalloc(sizeof(struct espconn));
-	if(conn == NULL) return;
-
-	espconn_create(conn);
-	espconn_regist_time(conn, 5, 0);
-
-	conn->type =  ESPCONN_TCP;
-	conn->state = ESPCONN_NONE;
-
-	conn->proto.tcp = (esp_tcp *)os_zalloc(sizeof(esp_tcp));
-	conn->proto.tcp->local_port = 80;
-
-	espconn_regist_connectcb(conn, connection_listener);
-	espconn_accept(conn);
-
-	os_printf("nano httpd started\n");
+	esp_nano_httpd_init();
 }
-
 

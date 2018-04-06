@@ -71,7 +71,8 @@ typedef struct {
 } http_callback_t;
 
 void esp_nano_httpd_register_content(const http_callback_t *content_info );
-void esp_nano_httpd_init(uint8_t wifi_mode);
+void esp_nano_httpd_init(void);
+void esp_nano_httpd_init_AP(uint8_t wifi_mode);
 
 void send_http_response(struct espconn *conn, const char *code, const char *cont_type, const char *content, uint32_t cont_len);
 void send_html(struct espconn *conn, void *arg, uint32_t len);

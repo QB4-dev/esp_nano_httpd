@@ -65,7 +65,7 @@ typedef struct {
 
 typedef struct {
 	const char *path;
-	void (*handler__)(struct espconn *, void *, uint32_t);
+	void (*handler)(struct espconn *, void *, uint32_t);
 	void *arg;
 	uint32_t arg_len;
 } http_callback_t;

@@ -46,25 +46,25 @@ SOFTWARE.*/
 #endif
 
 static const http_callback_t *url_config;
-static volatile os_timer_t http_resp_tx_timer;
 
 static char  *http_response_buff = NULL;
 static uint32 http_response_len = 0;
 static uint32 http_response_pos = 0;
 
-static void ICACHE_FLASH_ATTR http_resp_chunk_tx(struct espconn *conn)
+static void ICACHE_FLASH_ATTR http_resp_chunk_tx(void *arg)
 {
+	struct espconn *conn = (struct espconn *)arg;
 	uint32 len = http_response_len - http_response_pos;
-	if( len > 256) len = 256; //set chunk size
+
+	if( len > 2048) len = 2048; //set chunk size(no more than 2920)
 
 	if( len <= 0 ){
-		os_timer_disarm(&http_resp_tx_timer);
 		os_free(http_response_buff);
 		http_response_buff = NULL;
 		espconn_disconnect(conn);
 		return;
 	}
-	if( 0 == espconn_sent(conn, &http_response_buff[http_response_pos], len) )
+	if( espconn_send(conn, &http_response_buff[http_response_pos], len) == 0 )
 		http_response_pos+=len;
 }
 
@@ -97,9 +97,7 @@ void ICACHE_FLASH_ATTR send_http_response(struct espconn *conn, const char *code
 
 	http_response_len = header_len+content_len;
 
-	os_timer_disarm(&http_resp_tx_timer);
-	os_timer_setfn(&http_resp_tx_timer, (os_timer_func_t *)http_resp_chunk_tx, conn);
-	os_timer_arm (&http_resp_tx_timer, 10, 1);
+	http_resp_chunk_tx(conn); //start response tx chain
 }
 
 void ICACHE_FLASH_ATTR resp_http_ok(struct espconn *conn) {
@@ -213,7 +211,7 @@ static void ICACHE_FLASH_ATTR receive_cb(void *arg, char *pdata, unsigned short 
 		req->cont_bytes_left = req->cont_bytes_left - len;
 		req->read_state = REQ_CONTENT_PART;
 
-		if(recall_cb != NULL)(*recall_cb->handler__)(conn, recall_cb->arg, recall_cb->arg_len);
+		if(recall_cb != NULL)recall_cb->handler(conn, recall_cb->arg, recall_cb->arg_len);
 		return;
 	}
 
@@ -225,7 +223,7 @@ static void ICACHE_FLASH_ATTR receive_cb(void *arg, char *pdata, unsigned short 
 	for(url = url_config; url->path != NULL; url++){
 		if( strcmp(req->path,url->path) == 0 ){
 			NANO_HTTPD_DBG("url: %s found\n", req->path);
-			if(url->handler__ != NULL) (*url->handler__)(conn, url->arg, url->arg_len);
+			if(url->handler != NULL) url->handler(conn, url->arg, url->arg_len);
 			if(req->cont_bytes_left > 0) recall_cb = url; //not all content data received
 			return;//request handled
 		}
@@ -248,14 +246,13 @@ static void ICACHE_FLASH_ATTR connection_listener(void *arg)
 {
     struct espconn *conn = (struct espconn *)arg;
 
-    //espconn_set_opt(conn, ESPCONN_NODELAY);
-    espconn_set_opt(conn, ESPCONN_COPY);
-    //espconn_set_opt(conn, ESPCONN_REUSEADDR);
+    espconn_set_opt(conn, ESPCONN_START|ESPCONN_KEEPALIVE);
 
     http_request_t *req = (http_request_t*) os_zalloc(sizeof(http_request_t));
     conn->reverse = req;
 
     espconn_regist_recvcb(conn, receive_cb );
+    espconn_regist_sentcb(conn, http_resp_chunk_tx);
     espconn_regist_disconcb(conn, disconnect_cb);
 }
 
@@ -268,13 +265,14 @@ void ICACHE_FLASH_ATTR esp_nano_httpd_register_content(const http_callback_t *co
 
 void ICACHE_FLASH_ATTR esp_nano_httpd_init(void)
 {
-	struct espconn *conn;
+	static struct espconn *conn;
+	if(conn != NULL) return; //already initialized
 
 	conn = (struct espconn *)os_zalloc(sizeof(struct espconn));
 	if(conn == NULL) return;
 
 	espconn_create(conn);
-	espconn_regist_time(conn, 5, 0);
+	espconn_regist_time(conn, 5, 1);
 
 	conn->type =  ESPCONN_TCP;
 	conn->state = ESPCONN_NONE;

@@ -25,6 +25,7 @@ SOFTWARE.*/
 #include <ip_addr.h>
 #include <espconn.h>
 #include <json/jsontree.h>
+#include "js.h"
 #include "../esp_nano_httpd.h"
 
 static struct bss_info *bss_link; //scan list
@@ -46,43 +47,11 @@ JSONTREE_OBJECT(json_tree,
 	JSONTREE_PAIR("scan", &js_wifi_scan_cb),
 );
 
-static struct {
-	char *buff;
-	uint32_t bytes;
-	uint32_t size;
-} json_cache;
-
-int ICACHE_FLASH_ATTR json_putchar(int c)
-{
-    if(json_cache.buff != NULL && json_cache.bytes < json_cache.size) {
-    	json_cache.buff[json_cache.bytes++] = c;
-        return c;
-    }
-    return 0;
-}
-
-static void ICACHE_FLASH_ATTR json_tree_send(struct espconn *conn,uint32_t cache_size)
-{
-	struct jsontree_context js_ctx;
-
-	json_cache.buff = (char *)os_zalloc(cache_size);
-	if(json_cache.buff == NULL) return resp_http_error(conn);
-
-	json_cache.size=cache_size;
-	json_cache.bytes=0;
-
-	jsontree_setup(&js_ctx, (struct jsontree_value *)&json_tree, json_putchar);
-	while( jsontree_print_next(&js_ctx)){};
-
-	send_http_response(conn, "200 OK","application/json", json_cache.buff, json_cache.bytes);
-	os_free(json_cache.buff);
-}
 
 static int ICACHE_FLASH_ATTR js_wifi_scan_list(struct jsontree_context *js_ctx)
 {
 	const char *auth_mode[] = { "OPEN", "WEP", "WPA-PSK", "WPA2-PSK", "WPA-PSK/WPA2-PSK" };
-	char *link_info = (char*)os_malloc(256);
-	if(link_info == NULL) return -1;
+	char link_info[256];
 
 	jsontree_write_atom(js_ctx, "[");
 	while (bss_link != NULL){
@@ -93,7 +62,6 @@ static int ICACHE_FLASH_ATTR js_wifi_scan_list(struct jsontree_context *js_ctx)
 		bss_link = bss_link->next.stqe_next;
 	}
 	jsontree_write_atom(js_ctx, "]");
-	os_free(link_info);
 	return 0;
 }
 
@@ -123,7 +91,7 @@ static void ICACHE_FLASH_ATTR resp_wifi_conn_status(void *arg)
 
 	wifi_station_get_config(&station_config);
 	js_ssid_info.value = station_config.ssid;
-	json_tree_send(conn,1024);
+	json_tree_send(conn, &json_tree, 1024);
 }
 
 static void ICACHE_FLASH_ATTR wifi_scan_done(void *arg, STATUS status)
@@ -132,9 +100,8 @@ static void ICACHE_FLASH_ATTR wifi_scan_done(void *arg, STATUS status)
 	if(status != OK) return resp_http_error(wifi_scan_conn);
 
 	bss_link = (struct bss_info *)arg; //update bss_link list
-	json_tree_send(wifi_scan_conn,1024);
+	json_tree_send(wifi_scan_conn, &json_tree, 1024);
 }
-
 
 
 void ICACHE_FLASH_ATTR wifi_callback(struct espconn *conn, void *arg, uint32_t len)

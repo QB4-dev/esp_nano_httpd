@@ -288,7 +288,7 @@ void ICACHE_FLASH_ATTR esp_nano_httpd_init(void)
 }
 
 /* initialize wifi and httpd. Use one of wifi modes defined in <user_interface.h> */
-void ICACHE_FLASH_ATTR esp_nano_httpd_init_AP(uint8_t wifi_mode)
+void ICACHE_FLASH_ATTR esp_nano_httpd_init_AP(uint8_t wifi_mode, const char *AP_ssid)
 {
 	struct softap_config ap_config;
 	char mac[6];
@@ -297,7 +297,7 @@ void ICACHE_FLASH_ATTR esp_nano_httpd_init_AP(uint8_t wifi_mode)
 			wifi_get_macaddr(SOFTAP_IF, (unsigned char*)mac);
 			wifi_softap_get_config(&ap_config);
 
-			ets_snprintf(ap_config.ssid,32,"%s-%02X%02X", ESP_NANO_HTTPD_AP_NAME, mac[4],mac[5]);
+			ets_snprintf(ap_config.ssid,32,"%s-%02X%02X", AP_ssid, mac[4],mac[5]);
 			ap_config.password[0] = 0;
 			ap_config.ssid_len = strlen(ap_config.ssid);
 			ap_config.channel = 1;

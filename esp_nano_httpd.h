@@ -25,6 +25,7 @@ SOFTWARE.*/
 #include <ip_addr.h>
 #include <espconn.h>
 #include <user_interface.h>
+#include <json/jsontree.h>
 
 /* Define wireless access point SSID name as ESP_NANO_HTTPD_AP_NAME in user_config.h
   or somewhere else before including this file
@@ -75,7 +76,8 @@ void esp_nano_httpd_init(void);
 void esp_nano_httpd_init_AP(uint8_t wifi_mode, const char *AP_ssid);
 
 void send_http_response(struct espconn *conn, const char *code, const char *cont_type, const char *content, uint32_t cont_len);
-void send_html(struct espconn *conn, void *arg, uint32_t len);
+void send_html(struct espconn *conn, void *html, uint32_t len);
+void send_json_tree(struct espconn *conn, struct jsontree_object *js_tree, uint32_t cache_size);
 
 void resp_http_ok(struct espconn *conn);
 void resp_http_404(struct espconn *conn);

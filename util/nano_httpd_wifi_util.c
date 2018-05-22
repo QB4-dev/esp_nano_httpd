@@ -25,7 +25,6 @@ SOFTWARE.*/
 #include <ip_addr.h>
 #include <espconn.h>
 #include <json/jsontree.h>
-#include "js.h"
 #include "../esp_nano_httpd.h"
 
 static struct bss_info *bss_link; //scan list
@@ -91,7 +90,7 @@ static void ICACHE_FLASH_ATTR resp_wifi_conn_status(void *arg)
 
 	wifi_station_get_config(&station_config);
 	js_ssid_info.value = station_config.ssid;
-	json_tree_send(conn, &json_tree, 1024);
+	send_json_tree(conn, &json_tree, 1024);
 }
 
 static void ICACHE_FLASH_ATTR wifi_scan_done(void *arg, STATUS status)
@@ -100,7 +99,7 @@ static void ICACHE_FLASH_ATTR wifi_scan_done(void *arg, STATUS status)
 	if(status != OK) return resp_http_error(wifi_scan_conn);
 
 	bss_link = (struct bss_info *)arg; //update bss_link list
-	json_tree_send(wifi_scan_conn, &json_tree, 1024);
+	send_json_tree(wifi_scan_conn, &json_tree, 1024);
 }
 
 

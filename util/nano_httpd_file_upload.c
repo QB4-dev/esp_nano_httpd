@@ -25,7 +25,6 @@ SOFTWARE.*/
 #include <mem.h>
 
 #include "nano_httpd_file_upload.h"
-#include "js.h"
 
 static const char empty_str[] = "";
 static struct jsontree_string js_upload_info = JSONTREE_STRING(empty_str);
@@ -46,13 +45,13 @@ typedef struct {
 typedef struct {
 	const char *boundary;
 	enum {
-		GET_INIT_BOUND 				=  0,
-		GET_CONTENT_INFO			=  1,
-		CONTENT_UPLOAD				=  2,
-		UPLOAD_COMPLETE				=  3,
-		UPLOAD_ERR_WRONG_CONTENT 	= -1,
-		UPLOAD_ERR_FILE_TOO_BIG    	= -2,
-		UPLOAD_FLASH_WRITE_ERROR    = -3,
+		GET_INIT_BOUND			=  0,
+		GET_CONTENT_INFO		=  1,
+		CONTENT_UPLOAD			=  2,
+		UPLOAD_COMPLETE			=  3,
+		UPLOAD_ERR_WRONG_CONTENT= -1,
+		UPLOAD_ERR_FILE_TOO_BIG	= -2,
+		UPLOAD_FLASH_WRITE_ERROR= -3,
 	} state;
 	file_info_t    *f_info;
 	flash_upload_t *flash;
@@ -208,7 +207,7 @@ void ICACHE_FLASH_ATTR resp_upload_state(struct espconn *conn, upload_state_t *u
 			break;
 	}
 	js_upload_info.value = info;
-	json_tree_send(conn, &json_tree, 256);
+	send_json_tree(conn, &json_tree, 256);
 }
 
 

@@ -22,7 +22,6 @@ SOFTWARE.*/
 
 #include <ip_addr.h>
 #include <espconn.h>
-
 #include <osapi.h>
 #include <mem.h>
 
@@ -50,6 +49,12 @@ static const http_callback_t *url_config;
 static char  *http_response_buff = NULL;
 static uint32 http_response_len = 0;
 static uint32 http_response_pos = 0;
+
+static struct {
+	char *buff;
+	uint32_t bytes;
+	uint32_t size;
+} json_cache;
 
 static void ICACHE_FLASH_ATTR http_resp_chunk_tx(void *arg)
 {
@@ -117,6 +122,37 @@ void ICACHE_FLASH_ATTR resp_http_error(struct espconn *conn) {
 void ICACHE_FLASH_ATTR send_html(struct espconn *conn, void *html, uint32_t len){
 	send_http_response(conn, "200 OK","text/html", html, len);
 }
+
+static int ICACHE_FLASH_ATTR json_putchar(int c)
+{
+    if(json_cache.buff != NULL && json_cache.bytes < json_cache.size) {
+    	json_cache.buff[json_cache.bytes++] = c;
+        return c;
+    }
+    return 0;
+}
+
+void ICACHE_FLASH_ATTR send_json_tree(struct espconn *conn, struct jsontree_object *js_tree, uint32_t cache_size)
+{
+	struct jsontree_context js_ctx;
+
+	json_cache.buff = (char *)os_zalloc(cache_size);
+	if(json_cache.buff == NULL){
+		resp_http_error(conn);
+		return;
+	}
+
+	json_cache.size=cache_size;
+	json_cache.bytes=0;
+
+	jsontree_setup(&js_ctx, (struct jsontree_value *)js_tree, json_putchar);
+	while( jsontree_print_next(&js_ctx)){};
+
+	send_http_response(conn, "200 OK","application/json", json_cache.buff, json_cache.bytes);
+	os_free(json_cache.buff);
+}
+
+
 
 static int ICACHE_FLASH_ATTR parse_http_request_header(http_request_t *req, char *data, unsigned short len){
 	char *type, *path, *query, *http_ver;

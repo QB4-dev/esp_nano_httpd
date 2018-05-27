@@ -152,8 +152,6 @@ void ICACHE_FLASH_ATTR send_json_tree(struct espconn *conn, struct jsontree_obje
 	os_free(json_cache.buff);
 }
 
-
-
 static int ICACHE_FLASH_ATTR parse_http_request_header(http_request_t *req, char *data, unsigned short len){
 	char *type, *path, *query, *http_ver;
 	char *head_attr, *content_type, *content_len, *req_content;
@@ -201,8 +199,8 @@ static int ICACHE_FLASH_ATTR parse_http_request_header(http_request_t *req, char
 	content_len  = strstr(head_attr,"Content-Length:");
 	req_content  = strstr(head_attr,"\r\n\r\n");
 	if(req_content != NULL){
-		memset(req_content,0,4);
-		req_content+=4; //skip  CR LF CR LF
+		memset(req_content,0,4);//mask  CR LF CR LF
+		req_content+=4; 		//skip  CR LF CR LF
 	}
 	if(content_type != NULL){
 		content_type = strtok(content_type,"\r\n");
@@ -292,7 +290,16 @@ static void ICACHE_FLASH_ATTR connection_listener(void *arg)
     espconn_regist_disconcb(conn, disconnect_cb);
 }
 
+/* Define content_info as in example below:
 
+const http_callback_t url_cfg[] = {
+	{"/", send_html, index_html, sizeof(index_html)},
+	{"/led",  led_demo_callback, NULL, 0},
+	{"/wifi", wifi_callback, NULL, 0},
+	{0,0,0,0} //last callback
+};
+
+Always put NULL callback at the end of callback list */
 void ICACHE_FLASH_ATTR esp_nano_httpd_register_content(const http_callback_t *content_info )
 {
 	url_config = content_info;
@@ -323,7 +330,18 @@ void ICACHE_FLASH_ATTR esp_nano_httpd_init(void)
 	os_printf("nano httpd started\n");
 }
 
-/* initialize wifi and httpd. Use one of wifi modes defined in <user_interface.h> */
+/* initialize wifi and httpd. Use one of wifi modes defined in <user_interface.h>
+
+NOTE: Two last bytes from device MAC address
+will be added at the end to create unique AP names for multiple devices
+
+For example:
+AP_ssid defined as: "MY-ESP-DEV"
+
+devices visible as:
+	device 1: "MY-ESP-DEV-9FAE"
+	device 2: "MY-ESP-DEV-A3C2"
+	... */
 void ICACHE_FLASH_ATTR esp_nano_httpd_init_AP(uint8_t wifi_mode, const char *AP_ssid)
 {
 	struct softap_config ap_config;

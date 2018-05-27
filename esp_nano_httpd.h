@@ -27,28 +27,11 @@ SOFTWARE.*/
 #include <user_interface.h>
 #include <json/jsontree.h>
 
-/* Define wireless access point SSID name as ESP_NANO_HTTPD_AP_NAME in user_config.h
-  or somewhere else before including this file
-
-NOTE: Two last bytes from device MAC address
-will be added at the end to create unique AP names for multiple devices
-
-For example:
-NANO_HTTPD_AP_NAME defined as:
-
-#define NANO_HTTPD_AP_NAME	"MY-ESP-DEV"
-
-devices visible as:
-	device 1: "MY-ESP-DEV-9FAE"
-	device 2: "MY-ESP-DEV-A3C2"
-	...
-*/
-
 typedef struct {
 	enum {
-		TYPE_UNKNOWN = 0,
-		TYPE_GET 	 = 1,
-		TYPE_POST 	 = 2
+		TYPE_UNKNOWN= 0,
+		TYPE_GET	= 1,
+		TYPE_POST	= 2
 	} type;
 	const char* path;
 	const char* query;
@@ -57,8 +40,8 @@ typedef struct {
 	uint32_t content_len;
 	void *content;
 	enum {
-		REQ_GOT_HEADER		= 0,
-		REQ_CONTENT_PART	= 1
+		REQ_GOT_HEADER	= 0,
+		REQ_CONTENT_PART= 1
 	} read_state;
 	uint32_t cont_part_len;
 	uint32_t cont_bytes_left;

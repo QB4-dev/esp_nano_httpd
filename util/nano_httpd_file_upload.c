@@ -21,15 +21,32 @@ SOFTWARE.*/
 #include <ets_sys.h>
 #include <osapi.h>
 #include <spi_flash.h>
-#include <json/jsontree.h>
 #include <mem.h>
+#include <json/jsontree.h>
+#include <upgrade.h>
 
 #include "nano_httpd_file_upload.h"
 
 static const char empty_str[] = "";
-static struct jsontree_string js_upload_info = JSONTREE_STRING(empty_str);
-JSONTREE_OBJECT(json_tree,
-	JSONTREE_PAIR("upload", &js_upload_info)
+static struct jsontree_string js_upload_c_type		= JSONTREE_STRING(empty_str);
+static struct jsontree_int	  js_upload_sec			= {.type= JSON_TYPE_INT, .value=0};
+static struct jsontree_int 	  js_upload_max_size 	= {.type= JSON_TYPE_INT, .value=0};
+static struct jsontree_string js_upload_info 		= JSONTREE_STRING(empty_str);
+
+JSONTREE_OBJECT(js_tree_upload,
+	JSONTREE_PAIR("ContentType",  &js_upload_c_type),
+	JSONTREE_PAIR("flash_sector", &js_upload_sec),
+	JSONTREE_PAIR("max_size", 	  &js_upload_max_size),
+	JSONTREE_PAIR("upload_status",&js_upload_info)
+);
+
+static struct jsontree_string js_upgrade_usrbin    = JSONTREE_STRING(empty_str);
+static struct jsontree_string js_upgrade_flash_map = JSONTREE_STRING(empty_str);
+
+JSONTREE_OBJECT(js_tree_upgrade,
+	JSONTREE_PAIR("usrbin", &js_upgrade_usrbin),
+	JSONTREE_PAIR("flash_map", &js_upgrade_flash_map),
+	JSONTREE_PAIR("upload_status",&js_upload_info)
 );
 
 #define EXTRA_BYTES		128 //additional bytes in sector buffer
@@ -98,8 +115,6 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 	flash_upload_t *flash = upload->flash;
 	uint16_t base_sec = upload->f_info->base_sec;
 
-	os_printf("content upload(state %d) bytes left %d\n", upload->state, bytes_left);
-
 	switch(upload->state){
 		case GET_INIT_BOUND:
 			bound_end = find_bound(content, len, upload->boundary);
@@ -139,6 +154,8 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 			if(rx < len) content_upload(f_content, len-rx, upload, bytes_left);
 			break;
 		case CONTENT_UPLOAD:
+			os_printf("file upload - sector %x %d bytes left \n", base_sec+flash->c_sec, bytes_left);
+
 			page_wr = (flash->sec_wr+len < SEC_BUFF_LEN)?(len):(SEC_BUFF_LEN - flash->sec_wr);
 			os_memcpy(flash->sec_buff+flash->sec_wr, content, page_wr); //write new bytes to buffer
 			flash->sec_wr += page_wr;
@@ -161,10 +178,12 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 				}
 				//flash sector write
 				ets_intr_lock();
-				if( spi_flash_write( (base_sec+flash->c_sec)*SPI_FLASH_SEC_SIZE,(uint32_t *)flash->sec_buff,sector_wr) == SPI_FLASH_RESULT_OK)
+				if( spi_flash_write( (base_sec+flash->c_sec)*SPI_FLASH_SEC_SIZE,(uint32_t *)flash->sec_buff,sector_wr) == SPI_FLASH_RESULT_OK){
 					flash->wr+= sector_wr;
-				else
+				}else{
 					upload->state = UPLOAD_FLASH_WRITE_ERROR;
+					return;
+				}
 				ets_intr_unlock();
 
 				//if bound end found mark upload as complete
@@ -172,7 +191,6 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 					upload->state = UPLOAD_COMPLETE;
 					return;
 				}
-
 				//move extra bytes to buffer start
 				os_memcpy(flash->sec_buff, flash->sec_buff+SPI_FLASH_SEC_SIZE, EXTRA_BYTES);
 				flash->sec_wr=EXTRA_BYTES;
@@ -185,10 +203,8 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 	}
 }
 
-void ICACHE_FLASH_ATTR resp_upload_state(struct espconn *conn, upload_state_t *upload)
+static void ICACHE_FLASH_ATTR update_upload_info(upload_state_t *upload, const char *info)
 {
-	char info[32] = {0};
-
 	switch(upload->state){
 		case UPLOAD_COMPLETE:
 			ets_snprintf(info,32,"uploaded %d bytes OK",upload->flash->wr);
@@ -203,11 +219,22 @@ void ICACHE_FLASH_ATTR resp_upload_state(struct espconn *conn, upload_state_t *u
 			ets_snprintf(info,32,"flash write error");
 			break;
 		default:
-			ets_snprintf(info,32,"upload in progress");
+			ets_snprintf(info,32,"upload state %d", upload->state);
 			break;
 	}
 	js_upload_info.value = info;
-	send_json_tree(conn, &json_tree, 256);
+}
+
+static void ICACHE_FLASH_ATTR resp_upload_info(struct espconn *conn, file_info_t *f_info, upload_state_t *upload)
+{
+	char info[32];
+
+	js_upload_c_type.value = f_info->accept_cont_type;
+	js_upload_sec.value = f_info->base_sec;
+	js_upload_max_size.value = f_info->max_f_size;
+
+	if(upload != NULL) update_upload_info(upload, info);
+	send_json_tree(conn, &js_tree_upload, 256);
 }
 
 
@@ -218,30 +245,73 @@ void ICACHE_FLASH_ATTR file_upload_callback(struct espconn *conn, void *arg, uin
 
 	static upload_state_t *upload;
 
-    if(req == NULL || req->type != TYPE_POST || f_info == NULL ) return resp_http_error(conn);
+    if(req == NULL || f_info == NULL ) return resp_http_error(conn);
+
+    if(req->type == TYPE_GET )
+    	return resp_upload_info(conn, f_info, upload);
 
     if( req->read_state == REQ_GOT_HEADER ){
     	upload = (upload_state_t*)os_zalloc(sizeof(upload_state_t));
     	if(upload == NULL) return resp_http_error(conn);
 
 		upload->flash  = (flash_upload_t*)os_zalloc(sizeof(flash_upload_t));
-		if(upload->flash == NULL) return resp_upload_state(conn,upload);
+		if(upload->flash == NULL) return resp_http_error(conn);
 
     	upload->boundary = get_bound(req->content_type);
-    	if(upload->boundary == NULL) return resp_upload_state(conn,upload);
+    	if(upload->boundary == NULL) return resp_http_error(conn);
 
 		upload->f_info = f_info;
     }
     content_upload(req->content, req->cont_part_len, upload, req->cont_bytes_left);
 
     if(req->cont_bytes_left == 0){
-    	upload->f_info->f_size = upload->flash->wr;
-		os_printf("uploaded(%d bytes) %s\n", upload->f_info->f_size, (upload->state==UPLOAD_COMPLETE)?("OK"):("ERR"));
-		resp_upload_state(conn,upload);
+    	upload->f_info->upload_size = upload->flash->wr;
+		os_printf("uploaded(%d bytes) %s\n", upload->f_info->upload_size, (upload->state==UPLOAD_COMPLETE)?("OK"):("ERR"));
+		resp_upload_info(conn, f_info, upload);
 		os_free(upload->flash);
 		os_free(upload);
     }
 }
+
+
+static void ICACHE_FLASH_ATTR resp_upgrade_info(struct espconn *conn, upload_state_t *upload)
+{
+	char info[32];
+	uint8_t fw_bin;
+	enum flash_size_map flash_map;
+
+	fw_bin = system_upgrade_userbin_check();
+	flash_map = system_get_flash_size_map();
+
+	js_upgrade_usrbin.value = (fw_bin == UPGRADE_FW_BIN1)?"APP1":"APP2";
+
+	switch(flash_map){
+		case FLASH_SIZE_4M_MAP_256_256:
+		case FLASH_SIZE_2M:
+			js_upgrade_flash_map.value = "FOTA not supported";
+			break;
+		case FLASH_SIZE_8M_MAP_512_512:
+			js_upgrade_flash_map.value = "FLASH_SIZE_8M_MAP_512_512";
+			break;
+		case FLASH_SIZE_16M_MAP_512_512:
+			js_upgrade_flash_map.value = "FLASH_SIZE_16M_MAP_512_512";
+			break;
+		case FLASH_SIZE_32M_MAP_512_512:
+			js_upgrade_flash_map.value = "FLASH_SIZE_32M_MAP_512_512";
+			break;
+		case FLASH_SIZE_16M_MAP_1024_1024:
+			js_upgrade_flash_map.value = "FLASH_SIZE_16M_MAP_1024_1024";
+			break;
+		case FLASH_SIZE_32M_MAP_1024_1024:
+			js_upgrade_flash_map.value = "FLASH_SIZE_32M_MAP_1024_1024";
+			break;
+		default:
+			break;
+	}
+	if(upload != NULL) update_upload_info(upload, info);
+	send_json_tree(conn, &js_tree_upgrade, 256);
+}
+
 
 void ICACHE_FLASH_ATTR firmware_upgrade_callback(struct espconn *conn, void *arg, uint32_t len)
 {
@@ -249,11 +319,30 @@ void ICACHE_FLASH_ATTR firmware_upgrade_callback(struct espconn *conn, void *arg
 	static file_info_t f_info;
 	static upload_state_t *upload;
 	enum flash_size_map flash_map;
+    char *param, *action;
 	uint8_t fw_bin;
 
-    if(req == NULL || req->type != TYPE_POST ) return resp_http_error(conn);
+    if(req == NULL) return resp_http_error(conn);
 
-    if( req->read_state == REQ_GOT_HEADER ){
+    if(req->type == TYPE_GET && req->query == NULL) //return upgrade info
+    	return resp_upgrade_info(conn, upload);
+
+    if(req->type == TYPE_GET && req->query != NULL){
+  		param=strtok((char*)req->query,"&");     //read request query string
+  		if( os_memcmp(param,"action=",7) == 0 ){
+  			action = strchr(param,'=')+1;
+
+  			if( os_strcmp(action,"reboot") == 0){ //FOTA reboot
+  				os_printf("FOTA reboot\n");
+  				resp_http_ok(conn);
+  				system_upgrade_flag_set(UPGRADE_FLAG_FINISH);
+  				system_upgrade_reboot();
+  				return;
+  			}
+  		}
+    }
+
+    if( req->type == TYPE_POST  && req->read_state == REQ_GOT_HEADER ){
     	fw_bin    = system_upgrade_userbin_check();
     	os_printf("app bin:  %s\n", fw_bin?"APP1":"APP2");
     	flash_map = system_get_flash_size_map();
@@ -285,19 +374,19 @@ void ICACHE_FLASH_ATTR firmware_upgrade_callback(struct espconn *conn, void *arg
     	if(upload == NULL) return resp_http_error(conn);
 
 		upload->flash  = (flash_upload_t*)os_zalloc(sizeof(flash_upload_t));
-		if(upload->flash == NULL) return resp_upload_state(conn,upload);
+		if(upload->flash == NULL) return resp_http_error(conn);
 
     	upload->boundary = get_bound(req->content_type);
-    	if(upload->boundary == NULL) return resp_upload_state(conn,upload);
+    	if(upload->boundary == NULL) return resp_http_error(conn);
 
 		upload->f_info = &f_info;
     }
     content_upload(req->content, req->cont_part_len, upload, req->cont_bytes_left);
 
     if(req->cont_bytes_left == 0){
-    	upload->f_info->f_size = upload->flash->wr;
-		os_printf("firmware uploaded(%d bytes) %s\n", upload->f_info->f_size, (upload->state==UPLOAD_COMPLETE)?("OK"):("ERR"));
-		resp_upload_state(conn,upload);
+    	upload->f_info->upload_size = upload->flash->wr;
+		os_printf("firmware upload(%d bytes) %s\n", upload->f_info->upload_size, (upload->state==UPLOAD_COMPLETE)?("OK"):("ERR"));
+		resp_upgrade_info(conn, upload);
 		os_free(upload->flash);
 		os_free(upload);
     }

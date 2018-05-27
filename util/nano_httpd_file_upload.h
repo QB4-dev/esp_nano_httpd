@@ -27,7 +27,7 @@ SOFTWARE.*/
 typedef struct {
 	const char *accept_cont_type;
 	uint16_t base_sec;
-	uint32_t f_size;
+	uint32_t upload_size;
 	uint32_t max_f_size;
 } file_info_t;
 

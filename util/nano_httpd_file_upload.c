@@ -343,12 +343,10 @@ void ICACHE_FLASH_ATTR firmware_upgrade_callback(struct espconn *conn, void *arg
     }
 
     if( req->type == TYPE_POST  && req->read_state == REQ_GOT_HEADER ){
+    	f_info.accept_cont_type = "application/octet-stream";
     	fw_bin    = system_upgrade_userbin_check();
-    	os_printf("app bin:  %s\n", fw_bin?"APP1":"APP2");
     	flash_map = system_get_flash_size_map();
-		os_printf("fw upgrade flash map %d\n", flash_map);
-
-		f_info.accept_cont_type = "application/octet-stream";
+		os_printf("fw app bin: %s upgrade flash map %d\n", fw_bin?"APP1":"APP2", flash_map);
 
 		switch(flash_map){
 			case FLASH_SIZE_4M_MAP_256_256:

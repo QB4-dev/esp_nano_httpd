@@ -111,7 +111,9 @@ void ICACHE_FLASH_ATTR wifi_callback(struct espconn *conn, void *arg, uint32_t l
     char *param;
     char *action;
 
-    if(req == NULL || wifi_get_opmode() == SOFTAP_MODE) return resp_http_error(conn);
+    if(req == NULL || wifi_get_opmode() == SOFTAP_MODE)
+    	return resp_http_error(conn);
+
     js_addr_info.value = empty_str;//reset addr info text
     js_save_info.value = empty_str;//reset save info text
 

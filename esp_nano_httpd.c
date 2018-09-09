@@ -25,10 +25,6 @@ SOFTWARE.*/
 #include <osapi.h>
 #include <mem.h>
 
-#ifndef ESP_NANO_HTTPD_AP_NAME
-	#define ESP_NANO_HTTPD_AP_NAME	"ESP-DEV"
-#endif
-
 //#define NHTTPD_DEBUG
 //#define NHTTPD_DEBUG_REQ
 
@@ -44,11 +40,13 @@ SOFTWARE.*/
 #define NANO_HTTPD_DBG_REQ(fmt, args...)    /* Don't do anything in release builds */
 #endif
 
+#define HTTP_RESP_CHUNK_LEN 2048 //set chunk size(no more than 2920)
+
 static const http_callback_t *url_config;
 
-static char  *http_response_buff = NULL;
-static uint32 http_response_len = 0;
-static uint32 http_response_pos = 0;
+static const char *http_resp_content;
+static uint8_t 	  *http_resp_alloc;
+static volatile    uint32_t  http_resp_bytes_left;
 
 static struct {
 	char *buff;
@@ -56,53 +54,63 @@ static struct {
 	uint32_t size;
 } json_cache;
 
+static void ICACHE_FLASH_ATTR http_resp_free_after_tx(char *arg){
+	http_resp_alloc = arg;
+}
+
 static void ICACHE_FLASH_ATTR http_resp_chunk_tx(void *arg)
 {
 	struct espconn *conn = (struct espconn *)arg;
-	uint32 len = http_response_len - http_response_pos;
+	if(conn == NULL)return;
+	uint32 len;
 
-	if( len > 2048) len = 2048; //set chunk size(no more than 2920)
+	if( http_resp_bytes_left > HTTP_RESP_CHUNK_LEN)
+		len = HTTP_RESP_CHUNK_LEN;
+	else
+		len = http_resp_bytes_left;
 
-	if( len <= 0 ){
-		os_free(http_response_buff);
-		http_response_buff = NULL;
-		espconn_disconnect(conn);
-		return;
+	if( espconn_send(conn, (char*)http_resp_content, len) == 0 ){
+		http_resp_content += len;
+		http_resp_bytes_left -= len;
 	}
-	if( espconn_send(conn, &http_response_buff[http_response_pos], len) == 0 )
-		http_response_pos+=len;
+
+	if( len == 0 ){ //all data has been sent
+		if(http_resp_alloc != NULL){
+			os_free(http_resp_alloc);
+			http_resp_alloc = NULL;
+		}
+		http_resp_content = NULL;
+	}
 }
 
 void ICACHE_FLASH_ATTR send_http_response(struct espconn *conn, const char *code, const char *cont_type, const char *content, uint32_t cont_len)
 {
-	const char header[] = "HTTP/1.1 %s\r\n"
+	const char http_header[] = "HTTP/1.1 %s\r\n"
 			"Accept-Ranges: bytes\r\n"
 			"Content-Type: %s; charset=UTF-8\r\n"
 			"Content-Length: %i\r\n"
 			"Connection: close\r\n\r\n";
-	uint32_t content_len;
+	char *http_resp_buff;
 	uint32_t header_len;
+	uint32_t bytes_free;
+	uint32_t cont_bytes;
 
-	if( http_response_buff != NULL ){
-		os_free(http_response_buff);
-		http_response_buff = NULL;
-	}
-	content_len = (content != NULL)?(cont_len):(0);
+	http_resp_buff = (char *)os_malloc(HTTP_RESP_CHUNK_LEN);
+	if(http_resp_buff == NULL) return;
 
-	http_response_len = strlen(header)+strlen(code)+strlen(cont_type)+16+content_len; //16 for content length string
-	http_response_buff = (char *)os_malloc(http_response_len);
+	ets_snprintf(http_resp_buff, HTTP_RESP_CHUNK_LEN, http_header, code, cont_type, cont_len);
+	header_len = strlen(http_resp_buff);
 
-	if(http_response_buff == NULL) return;
-	http_response_pos = 0;
+	bytes_free = HTTP_RESP_CHUNK_LEN-header_len;
+	cont_bytes = (cont_len > bytes_free)?(bytes_free):cont_len;
 
-	ets_snprintf(http_response_buff, http_response_len, header, code, cont_type, content_len);
-	header_len = strlen(http_response_buff);
-	if( content_len > 0 )
-		memcpy(http_response_buff+header_len, content, content_len);
+	os_memcpy(http_resp_buff+header_len, content, cont_bytes);
 
-	http_response_len = header_len+content_len;
+	http_resp_bytes_left = (content != NULL)? (cont_len-cont_bytes) : 0;
+	http_resp_content = content+cont_bytes;
 
-	http_resp_chunk_tx(conn); //start response tx chain
+	espconn_send(conn, http_resp_buff, header_len+cont_bytes); //start content tx chunk by chunk
+	os_free(http_resp_buff);
 }
 
 void ICACHE_FLASH_ATTR resp_http_ok(struct espconn *conn) {
@@ -121,6 +129,10 @@ void ICACHE_FLASH_ATTR resp_http_error(struct espconn *conn) {
 
 void ICACHE_FLASH_ATTR send_html(struct espconn *conn, void *html, uint32_t len){
 	send_http_response(conn, "200 OK","text/html", html, len);
+}
+
+void ICACHE_FLASH_ATTR send_text(struct espconn *conn, void *txt, uint32_t len){
+	send_http_response(conn, "200 OK","text/plain", txt, len);
 }
 
 static int ICACHE_FLASH_ATTR json_putchar(int c)
@@ -148,11 +160,12 @@ void ICACHE_FLASH_ATTR send_json_tree(struct espconn *conn, struct jsontree_obje
 	jsontree_setup(&js_ctx, (struct jsontree_value *)js_tree, json_putchar);
 	while( jsontree_print_next(&js_ctx)){};
 
+	http_resp_alloc = json_cache.buff;
 	send_http_response(conn, "200 OK","application/json", json_cache.buff, json_cache.bytes);
-	os_free(json_cache.buff);
+	http_resp_free_after_tx(json_cache.buff);
 }
 
-static int ICACHE_FLASH_ATTR parse_http_request_header(http_request_t *req, char *data, unsigned short len){
+static int ICACHE_FLASH_ATTR parse_http_request_header(http_request_t *req, char *data, uint32_t len){
 	char *type, *path, *query, *http_ver;
 	char *head_attr, *content_type, *content_len, *req_content;
 
@@ -163,8 +176,9 @@ static int ICACHE_FLASH_ATTR parse_http_request_header(http_request_t *req, char
 	if(head_attr != NULL){
 		os_memset(head_attr,0,2);
 		head_attr=head_attr+2;
-	} else
+	} else {
 		goto unknown_request;
+	}
 	//find tokens
 	type = strtok(data," ");
 	path = strtok(NULL," ");
@@ -191,8 +205,9 @@ static int ICACHE_FLASH_ATTR parse_http_request_header(http_request_t *req, char
 			req->query = query+1;
 			*query = 0;
 		}
-	} else
+	} else {
 		goto unknown_request;
+	}
 
 	//get request content information
 	content_type = strstr(head_attr,"Content-Type:");
@@ -217,6 +232,8 @@ static int ICACHE_FLASH_ATTR parse_http_request_header(http_request_t *req, char
 		req->content=0; //no data expected
 	else
 		req->content=req_content;
+
+	req->read_state = REQ_GOT_HEADER;
 	return 0;
 
 unknown_request:
@@ -239,26 +256,33 @@ static void ICACHE_FLASH_ATTR receive_cb(void *arg, char *pdata, unsigned short 
 	req = (http_request_t *)conn->reverse;
 	if( req == NULL ) return;
 
-	if(req->cont_bytes_left > 0){ //not all content data received before, recall last callback
+	//not all bytes received before, recall last callback
+	if(req->read_state == REQ_CONTENT_PART && req->cont_bytes_left > 0){
 		req->content = pdata;
 		req->cont_part_len = len;
 		req->cont_bytes_left = req->cont_bytes_left - len;
-		req->read_state = REQ_CONTENT_PART;
 
-		if(recall_cb != NULL)recall_cb->handler(conn, recall_cb->arg, recall_cb->arg_len);
+		if(recall_cb != NULL)
+			recall_cb->handler(conn, recall_cb->arg, recall_cb->arg_len);
 		return;
 	}
 
-	parse_http_request_header(req,pdata,len);
-	if(req->type == TYPE_UNKNOWN) return resp_http_error(conn);
+	if(parse_http_request_header(req,pdata,len) != 0)
+		return resp_http_error(conn);
 
-	req->read_state = REQ_GOT_HEADER;
 	//try to find requested url in given url config
 	for(url = url_config; url->path != NULL; url++){
 		if( strcmp(req->path,url->path) == 0 ){
 			NANO_HTTPD_DBG("url: %s found\n", req->path);
-			if(url->handler != NULL) url->handler(conn, url->arg, url->arg_len);
-			if(req->cont_bytes_left > 0) recall_cb = url; //not all content data received
+
+			if(url->handler != NULL)
+				url->handler(conn, url->arg, url->arg_len);
+
+			if(req->cont_bytes_left > 0){
+				//not all content data received
+				req->read_state = REQ_CONTENT_PART;
+				recall_cb = url;
+			}
 			return;//request handled
 		}
 	}
@@ -305,7 +329,7 @@ void ICACHE_FLASH_ATTR esp_nano_httpd_register_content(const http_callback_t *co
 	url_config = content_info;
 }
 
-
+/* initialize nano httpd */
 void ICACHE_FLASH_ATTR esp_nano_httpd_init(void)
 {
 	static struct espconn *conn;
@@ -320,6 +344,7 @@ void ICACHE_FLASH_ATTR esp_nano_httpd_init(void)
 	conn->type =  ESPCONN_TCP;
 	conn->state = ESPCONN_NONE;
 
+	/* Listen TCP packets on port 80 */
 	conn->proto.tcp = (esp_tcp *)os_zalloc(sizeof(esp_tcp));
 	if(conn->proto.tcp == NULL)return;
 	conn->proto.tcp->local_port = 80;
@@ -327,10 +352,10 @@ void ICACHE_FLASH_ATTR esp_nano_httpd_init(void)
 	espconn_regist_connectcb(conn, connection_listener);
 	espconn_accept(conn);
 
-	os_printf("nano httpd started\n");
+	os_printf("nano httpd active on port %d\n", conn->proto.tcp->local_port);
 }
 
-/* initialize wifi and httpd. Use one of wifi modes defined in <user_interface.h>
+/* initialize wifi AP and httpd. Use one of wifi modes defined in <user_interface.h>
 
 NOTE: Two last bytes from device MAC address
 will be added at the end to create unique AP names for multiple devices

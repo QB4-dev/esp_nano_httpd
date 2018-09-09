@@ -27,6 +27,7 @@ SOFTWARE.*/
 #include <user_interface.h>
 #include <json/jsontree.h>
 
+/* http request structure */
 typedef struct {
 	enum {
 		TYPE_UNKNOWN= 0,
@@ -47,6 +48,7 @@ typedef struct {
 	uint32_t cont_bytes_left;
 } http_request_t;
 
+/* http callback structure */
 typedef struct {
 	const char *path;
 	void (*handler)(struct espconn *, void *, uint32_t);
@@ -60,6 +62,7 @@ void esp_nano_httpd_init_AP(uint8_t wifi_mode, const char *AP_ssid);
 
 void send_http_response(struct espconn *conn, const char *code, const char *cont_type, const char *content, uint32_t cont_len);
 void send_html(struct espconn *conn, void *html, uint32_t len);
+void send_text(struct espconn *conn, void *txt, uint32_t len);
 void send_json_tree(struct espconn *conn, struct jsontree_object *js_tree, uint32_t cache_size);
 
 void resp_http_ok(struct espconn *conn);

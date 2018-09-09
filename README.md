@@ -26,20 +26,7 @@ MODULES	= driver user esp_nano_httpd
 ```c
 #include "../esp_nano_httpd/esp_nano_httpd.h
 ```
-4. In __user_config.h__ define the name of WiFi Access Point when ESP8266 device is working as AP(in config mode for example) 
-```c
-#define NANO_HTTPD_AP_NAME "MY-ESP-DEV"
-```
-> __NOTE:__ Two last bytes of your ESP8266 device MAC address will be added at the end of AP name to create unique AP names for multiple ESP8266 devices.  
-> For example:  
-> #define NANO_HTTPD_AP_NAME __"ESP-LED"__  
->
-> - device 1 AP name: __ESP-LED-13DF__  
-> - device 2 AP name: __ESP-LED-C0A1__  
->  ...  
-> - device x AP name: __ESP-LED-XXXX__  
-
-5. Now it's time to prepare our HTML content...  
+4. Now it's time to prepare our HTML content...  
 If you ever tried manually include HTML code inside C file you know the pain when you mixing two programming languages - all damn backslashes before quotation marks, no web browser preview, etc. (╯°□°）╯︵ ┻━┻  
 Not this time... I'll show you the trick ( ͡~ ͜ʖ ͡°)  
 ...  
@@ -83,19 +70,28 @@ esp_nano_httpd_register_content(url_conf);
 ```
 and start it when needed:
 ```c
-esp_nano_httpd_init(STATIONAP_MODE); //when used as AP
+ esp_nano_httpd_init_AP(STATIONAP_MODE, "ESP-LED"); //when used as AP*
 //or
-esp_nano_httpd_init(STATION_MODE);  //when used as router client
+esp_nano_httpd_init();  //when used as router client
 ```  
+> __NOTE:__ Two last bytes of your ESP8266 device MAC address will be added at the end of AP name to create unique AP names for multiple ESP8266 devices.  
+> For example:  
+> #define NANO_HTTPD_AP_NAME __"ESP-LED"__  
+>
+> - device 1 AP name: __ESP-LED-13DF__  
+> - device 2 AP name: __ESP-LED-C0A1__  
+>  ...  
+> - device x AP name: __ESP-LED-XXXX__  
+
 
 ## Using esp_nano_httpd:
 The moment and mode when you need to init  __esp_nano_httpd__ is dependent on your application.
 Typical workflow is:
-- __esp_nano_httpd__ is called with __STATIONAP_MODE__ when you need to setup your device options at first time run, or reconfigure the device(for example by setting ESP8266 device into config mode when button is pressed for 5s).
+- __esp_nano_httpd_init_AP__ is called with __STATIONAP_MODE__ when you need to setup your device options at first time run, or reconfigure the device(for example by setting ESP8266 device into config mode when button is pressed for 5s).
 
 and/or
 
-- __esp_nano_httpd__ is called with __STATION_MODE__ when you need to always have access to your device special functions via web browser (for example setting GPIO, playing sounds etc)
+- __esp_nano_httpd_init__ is called when you need to always have access to your device special functions via web browser (for example setting GPIO, playing sounds etc)
 
 ## esp_nano_httpd API:  
 

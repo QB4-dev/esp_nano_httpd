@@ -28,16 +28,18 @@ SOFTWARE.*/
 #include "nano_httpd_file_upload.h"
 
 static const char empty_str[] = "";
+static struct jsontree_string js_upload_f_ext		= JSONTREE_STRING(empty_str);
 static struct jsontree_string js_upload_c_type		= JSONTREE_STRING(empty_str);
 static struct jsontree_int	  js_upload_sec			= {.type= JSON_TYPE_INT, .value=0};
 static struct jsontree_int 	  js_upload_max_size 	= {.type= JSON_TYPE_INT, .value=0};
 static struct jsontree_string js_upload_info 		= JSONTREE_STRING(empty_str);
 
 JSONTREE_OBJECT(js_tree_upload,
-	JSONTREE_PAIR("ContentType",  &js_upload_c_type),
-	JSONTREE_PAIR("flash_sector", &js_upload_sec),
-	JSONTREE_PAIR("max_size", 	  &js_upload_max_size),
-	JSONTREE_PAIR("upload_status",&js_upload_info)
+	JSONTREE_PAIR("file_extension",&js_upload_f_ext),
+	JSONTREE_PAIR("ContentType",   &js_upload_c_type),
+	JSONTREE_PAIR("flash_sector",  &js_upload_sec),
+	JSONTREE_PAIR("max_size", 	   &js_upload_max_size),
+	JSONTREE_PAIR("upload_status", &js_upload_info)
 );
 
 static struct jsontree_string js_upgrade_usrbin    = JSONTREE_STRING(empty_str);
@@ -62,13 +64,15 @@ typedef struct {
 typedef struct {
 	const char *boundary;
 	enum {
-		GET_INIT_BOUND			=  0,
-		GET_CONTENT_INFO		=  1,
-		CONTENT_UPLOAD			=  2,
-		UPLOAD_COMPLETE			=  3,
-		UPLOAD_ERR_WRONG_CONTENT= -1,
-		UPLOAD_ERR_FILE_TOO_BIG	= -2,
-		UPLOAD_FLASH_WRITE_ERROR= -3,
+		GET_INIT_BOUND				=  0,
+		GET_CONTENT_INFO			=  1,
+		CONTENT_UPLOAD				=  2,
+		UPLOAD_COMPLETE				=  3,
+		UPLOAD_ERR_NO_INPUT_FILE	= -1,
+		UPLOAD_ERR_WRONG_FILE_EXT 	= -2,
+		UPLOAD_ERR_WRONG_CONTENT	= -3,
+		UPLOAD_ERR_FILE_TOO_BIG		= -4,
+		UPLOAD_FLASH_WRITE_ERROR	= -5,
 	} state;
 	file_info_t    *f_info;
 	flash_upload_t *flash;
@@ -109,8 +113,8 @@ static uint8_t* ICACHE_FLASH_ATTR find_bound(uint8_t *data, uint32_t len, const 
 
 static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upload_state_t *upload, uint32_t bytes_left)
 {
-	char *tok, *cont_disposition, *input_name, *content_type;
-    uint8_t *p, *bound_end, *f_content;
+	char *tok, *cont_disposition, *input_name, *f_name, *content_type;
+    uint8_t *p, *bound_end, *file_cont;
 	uint32_t rx, page_wr, sector_wr;
 	flash_upload_t *flash = upload->flash;
 	uint16_t base_sec = upload->f_info->base_sec;
@@ -126,12 +130,12 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 			break;
 		case GET_CONTENT_INFO:
 			p = content+2; //skip CR LF
-			f_content = strstr(p,"\r\n\r\n");
-			if(f_content == NULL || f_content+4 > content+len)
+			file_cont = strstr(p,"\r\n\r\n");
+			if(file_cont == NULL || file_cont+4 > content+len)
 				return;
-			os_memset(f_content,0,4); //mask  CR LF CR LF
-			f_content += 4;  		  //skip  CR LF CR LF
-			rx = f_content - content; //count processed bytes
+			os_memset(file_cont,0,4); //mask  CR LF CR LF
+			file_cont += 4;  		  //skip  CR LF CR LF
+			rx = file_cont - content; //count processed bytes
 
 			//find content info
 			tok = strtok(p,";\r\n");
@@ -140,22 +144,38 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 					cont_disposition = strchr(tok,' ')+1;
 				else if(strstr(tok," name="))
 					input_name = strchr(tok,'=')+1;
+				else if(strstr(tok," filename=")){
+					f_name = strchr(tok,'=')+1;
+					os_printf("file name:%s\n",f_name);
+				}
 				else if(strstr(tok,"Content-Type: "))
 					content_type = strchr(tok,' ')+1;
 			} while( (tok = strtok(NULL,";\r\n")) != NULL);
 
-			//check content type
-			if( strstr(content_type, upload->f_info->accept_cont_type) == 0 ){
-				os_printf("content type mismatch %s != %s\n", content_type, upload->f_info->accept_cont_type);
-				upload->state = UPLOAD_ERR_WRONG_CONTENT;
+			//check if file exists
+			if( strcmp(f_name, "\"\"") == 0 ){
+				os_printf("error: no file\n");
+				upload->state = UPLOAD_ERR_NO_INPUT_FILE;
 				return;
 			}
+			//check file extension
+			if( strstr(f_name, upload->f_info->accept_file_ext) == NULL ){
+				os_printf("error: wrong file type != %s \n", upload->f_info->accept_file_ext);
+				upload->state = UPLOAD_ERR_WRONG_FILE_EXT;
+				return;
+			}
+			//check content type
+			if( strcmp(content_type, "application/octet-stream" ) != 0 ){ //general binary data/content type not specified
+				if(strstr(content_type, upload->f_info->accept_cont_type) == 0 ){
+					os_printf("Error: content type mismatch %s != %s\n", content_type, upload->f_info->accept_cont_type);
+					upload->state = UPLOAD_ERR_WRONG_CONTENT;
+					return;
+				}
+			}
 			upload->state = CONTENT_UPLOAD;
-			if(rx < len) content_upload(f_content, len-rx, upload, bytes_left);
+			if(rx < len) content_upload(file_cont, len-rx, upload, bytes_left);
 			break;
 		case CONTENT_UPLOAD:
-			os_printf("file upload - sector %x %d bytes left \n", base_sec+flash->c_sec, bytes_left);
-
 			page_wr = (flash->sec_wr+len < SEC_BUFF_LEN)?(len):(SEC_BUFF_LEN - flash->sec_wr);
 			os_memcpy(flash->sec_buff+flash->sec_wr, content, page_wr); //write new bytes to buffer
 			flash->sec_wr += page_wr;
@@ -167,35 +187,33 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 			}
 
 			if(flash->sec_wr == SEC_BUFF_LEN || bytes_left == 0){ //page buffer full or no more bytes left
+				os_printf("upload: sector %x %d bytes left \n", base_sec+flash->c_sec, bytes_left);
 				spi_flash_erase_sector(base_sec+flash->c_sec); //erase new sector
 
 				bound_end = find_bound(flash->sec_buff, SEC_BUFF_LEN, upload->boundary); //try find end boundary
-				if( bound_end != NULL){
+				if( bound_end != NULL){ //got bound end
 					rx = bound_end - flash->sec_buff;  			   //count processed bytes
 					sector_wr = rx - (strlen(upload->boundary)+2); // + CR LF
 				} else {
-					sector_wr = SPI_FLASH_SEC_SIZE;
+					sector_wr = SPI_FLASH_SEC_SIZE;	//normal - full sector write
 				}
 				//flash sector write
 				ets_intr_lock();
 				if( spi_flash_write( (base_sec+flash->c_sec)*SPI_FLASH_SEC_SIZE,(uint32_t *)flash->sec_buff,sector_wr) == SPI_FLASH_RESULT_OK){
 					flash->wr+= sector_wr;
+					//move extra bytes in buffer from end to start
+					os_memcpy(flash->sec_buff, flash->sec_buff+SPI_FLASH_SEC_SIZE, EXTRA_BYTES);
+					flash->sec_wr=EXTRA_BYTES;
+					flash->c_sec++;
+
+					//if bound-end found file upload is complete
+					if( bound_end != NULL) upload->state = UPLOAD_COMPLETE;
 				}else{
 					upload->state = UPLOAD_FLASH_WRITE_ERROR;
-					return;
 				}
 				ets_intr_unlock();
-
-				//if bound end found mark upload as complete
-				if( bound_end != NULL){
-					upload->state = UPLOAD_COMPLETE;
-					return;
-				}
-				//move extra bytes to buffer start
-				os_memcpy(flash->sec_buff, flash->sec_buff+SPI_FLASH_SEC_SIZE, EXTRA_BYTES);
-				flash->sec_wr=EXTRA_BYTES;
-				flash->c_sec++;
 			}
+			if(upload->state != CONTENT_UPLOAD)return;
 			if(len > 0) content_upload(content+page_wr, len, upload, bytes_left);
 			break;
 		default:
@@ -203,11 +221,17 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 	}
 }
 
-static void ICACHE_FLASH_ATTR update_upload_info(upload_state_t *upload, const char *info)
+static void ICACHE_FLASH_ATTR set_upload_info(upload_state_t *upload, char *info)
 {
 	switch(upload->state){
 		case UPLOAD_COMPLETE:
 			ets_snprintf(info,32,"uploaded %d bytes OK",upload->flash->wr);
+			break;
+		case UPLOAD_ERR_NO_INPUT_FILE:
+			ets_snprintf(info,32,"no input file");
+			break;
+		case UPLOAD_ERR_WRONG_FILE_EXT:
+			ets_snprintf(info,32,"wrong file type");
 			break;
 		case UPLOAD_ERR_WRONG_CONTENT:
 			ets_snprintf(info,32,"wrong ContentType");
@@ -229,11 +253,12 @@ static void ICACHE_FLASH_ATTR resp_upload_info(struct espconn *conn, file_info_t
 {
 	char info[32];
 
+	js_upload_f_ext.value = f_info->accept_file_ext;
 	js_upload_c_type.value = f_info->accept_cont_type;
 	js_upload_sec.value = f_info->base_sec;
 	js_upload_max_size.value = f_info->max_f_size;
 
-	if(upload != NULL) update_upload_info(upload, info);
+	if(upload != NULL) set_upload_info(upload, info);
 	send_json_tree(conn, &js_tree_upload, 256);
 }
 
@@ -245,7 +270,8 @@ void ICACHE_FLASH_ATTR file_upload_callback(struct espconn *conn, void *arg, uin
 
 	static upload_state_t *upload;
 
-    if(req == NULL || f_info == NULL ) return resp_http_error(conn);
+    if(req == NULL || f_info == NULL )
+    	return resp_http_error(conn);
 
     if(req->type == TYPE_GET )
     	return resp_upload_info(conn, f_info, upload);
@@ -261,6 +287,7 @@ void ICACHE_FLASH_ATTR file_upload_callback(struct espconn *conn, void *arg, uin
     	if(upload->boundary == NULL) return resp_http_error(conn);
 
 		upload->f_info = f_info;
+		os_printf("file upload\n");
     }
     content_upload(req->content, req->cont_part_len, upload, req->cont_bytes_left);
 
@@ -270,6 +297,7 @@ void ICACHE_FLASH_ATTR file_upload_callback(struct espconn *conn, void *arg, uin
 		resp_upload_info(conn, f_info, upload);
 		os_free(upload->flash);
 		os_free(upload);
+		upload = NULL;
     }
 }
 
@@ -308,7 +336,7 @@ static void ICACHE_FLASH_ATTR resp_upgrade_info(struct espconn *conn, upload_sta
 		default:
 			break;
 	}
-	if(upload != NULL) update_upload_info(upload, info);
+	if(upload != NULL) set_upload_info(upload, info);
 	send_json_tree(conn, &js_tree_upgrade, 256);
 }
 
@@ -343,6 +371,7 @@ void ICACHE_FLASH_ATTR firmware_upgrade_callback(struct espconn *conn, void *arg
     }
 
     if( req->type == TYPE_POST  && req->read_state == REQ_GOT_HEADER ){
+    	f_info.accept_file_ext = ".bin";
     	f_info.accept_cont_type = "application/octet-stream";
     	fw_bin    = system_upgrade_userbin_check();
     	flash_map = system_get_flash_size_map();

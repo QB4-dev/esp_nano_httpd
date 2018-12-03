@@ -25,6 +25,7 @@ SOFTWARE.*/
 #include <os_type.h>
 
 typedef struct {
+	const char *accept_file_ext;
 	const char *accept_cont_type;
 	uint16_t base_sec;
 	uint32_t upload_size;

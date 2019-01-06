@@ -129,7 +129,7 @@ void ICACHE_FLASH_ATTR wifi_callback(struct espconn *conn, void *arg, uint32_t l
 			} else if( os_strcmp(action,"save") == 0){ //save current config
 				wifi_station_get_config(&station_conf);
 				save_ok = wifi_station_set_config(&station_conf);
-				js_save_info.value = save_ok?"OK":"ERROR";
+				js_save_info.value = save_ok?"OK":"ERR";
 			}
 		}
     } else if(req->type == TYPE_POST){

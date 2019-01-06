@@ -32,23 +32,26 @@ static struct jsontree_string js_upload_f_ext		= JSONTREE_STRING(empty_str);
 static struct jsontree_string js_upload_c_type		= JSONTREE_STRING(empty_str);
 static struct jsontree_int	  js_upload_sec			= {.type= JSON_TYPE_INT, .value=0};
 static struct jsontree_int 	  js_upload_max_size 	= {.type= JSON_TYPE_INT, .value=0};
-static struct jsontree_string js_upload_info 		= JSONTREE_STRING(empty_str);
+static struct jsontree_string js_upload_status 		= JSONTREE_STRING(empty_str);
+static struct jsontree_int 	  js_upload_bytes 		= {.type= JSON_TYPE_INT, .value=0};
 
 JSONTREE_OBJECT(js_tree_upload,
 	JSONTREE_PAIR("file_extension",&js_upload_f_ext),
 	JSONTREE_PAIR("ContentType",   &js_upload_c_type),
 	JSONTREE_PAIR("flash_sector",  &js_upload_sec),
 	JSONTREE_PAIR("max_size", 	   &js_upload_max_size),
-	JSONTREE_PAIR("upload_status", &js_upload_info)
+	JSONTREE_PAIR("upload_status", &js_upload_status),
+	JSONTREE_PAIR("upload_bytes",  &js_upload_bytes)
 );
 
 static struct jsontree_string js_upgrade_usrbin    = JSONTREE_STRING(empty_str);
 static struct jsontree_string js_upgrade_flash_map = JSONTREE_STRING(empty_str);
 
 JSONTREE_OBJECT(js_tree_upgrade,
-	JSONTREE_PAIR("usrbin", &js_upgrade_usrbin),
-	JSONTREE_PAIR("flash_map", &js_upgrade_flash_map),
-	JSONTREE_PAIR("upload_status",&js_upload_info)
+	JSONTREE_PAIR("usrbin", 		&js_upgrade_usrbin),
+	JSONTREE_PAIR("flash_map", 		&js_upgrade_flash_map),
+	JSONTREE_PAIR("upload_status",	&js_upload_status),
+	JSONTREE_PAIR("upload_bytes",  	&js_upload_bytes)
 );
 
 #define EXTRA_BYTES		128 //additional bytes in sector buffer
@@ -64,15 +67,15 @@ typedef struct {
 typedef struct {
 	const char *boundary;
 	enum {
-		GET_INIT_BOUND				=  0,
+		GET_CONTENT_BOUNDARY		=  0,
 		GET_CONTENT_INFO			=  1,
-		CONTENT_UPLOAD				=  2,
+		UPLOAD_IN_PROGRESS			=  2,
 		UPLOAD_COMPLETE				=  3,
 		UPLOAD_ERR_NO_INPUT_FILE	= -1,
 		UPLOAD_ERR_WRONG_FILE_EXT 	= -2,
 		UPLOAD_ERR_WRONG_CONTENT	= -3,
 		UPLOAD_ERR_FILE_TOO_BIG		= -4,
-		UPLOAD_FLASH_WRITE_ERROR	= -5,
+		UPLOAD_ERR_FLASH_WRITE		= -5,
 	} state;
 	file_info_t    *f_info;
 	flash_upload_t *flash;
@@ -120,7 +123,7 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 	uint16_t base_sec = upload->f_info->base_sec;
 
 	switch(upload->state){
-		case GET_INIT_BOUND:
+		case GET_CONTENT_BOUNDARY:
 			bound_end = find_bound(content, len, upload->boundary);
 			if( bound_end != NULL){
 				rx = bound_end - content;  //count processed bytes
@@ -164,30 +167,30 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 				upload->state = UPLOAD_ERR_WRONG_FILE_EXT;
 				return;
 			}
-			//check content type
-			if( strcmp(content_type, "application/octet-stream" ) != 0 ){ //general binary data/content type not specified
-				if(strstr(content_type, upload->f_info->accept_cont_type) == 0 ){
+			//skip content type check when: content type not specified/"application/octet-stream" - general binary data
+			if( upload->f_info->accept_cont_type == NULL || strcmp(content_type, "application/octet-stream" ) != 0 ){
+				//check content type
+				if( strstr(content_type, upload->f_info->accept_cont_type) == 0 ){
 					os_printf("Error: content type mismatch %s != %s\n", content_type, upload->f_info->accept_cont_type);
 					upload->state = UPLOAD_ERR_WRONG_CONTENT;
 					return;
 				}
 			}
-			upload->state = CONTENT_UPLOAD;
+			upload->state = UPLOAD_IN_PROGRESS;
 			if(rx < len) content_upload(file_cont, len-rx, upload, bytes_left);
 			break;
-		case CONTENT_UPLOAD:
+		case UPLOAD_IN_PROGRESS:
 			page_wr = (flash->sec_wr+len < SEC_BUFF_LEN)?(len):(SEC_BUFF_LEN - flash->sec_wr);
 			os_memcpy(flash->sec_buff+flash->sec_wr, content, page_wr); //write new bytes to buffer
 			flash->sec_wr += page_wr;
 			len-= page_wr;
-
+			//check upload size
 			if(flash->wr + flash->sec_wr > upload->f_info->max_f_size){
 				upload->state = UPLOAD_ERR_FILE_TOO_BIG;
 				return;
 			}
 
-			if(flash->sec_wr == SEC_BUFF_LEN || bytes_left == 0){ //page buffer full or no more bytes left
-				os_printf("upload: sector %x %d bytes left \n", base_sec+flash->c_sec, bytes_left);
+			if(flash->sec_wr == SEC_BUFF_LEN || bytes_left == 0){ //page buffer full or no more req bytes left
 				spi_flash_erase_sector(base_sec+flash->c_sec); //erase new sector
 
 				bound_end = find_bound(flash->sec_buff, SEC_BUFF_LEN, upload->boundary); //try find end boundary
@@ -197,23 +200,25 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 				} else {
 					sector_wr = SPI_FLASH_SEC_SIZE;	//normal - full sector write
 				}
+				os_printf("upload: sec %x/%db %db left\n", base_sec+flash->c_sec, sector_wr, bytes_left);
+
 				//flash sector write
 				ets_intr_lock();
-				if( spi_flash_write( (base_sec+flash->c_sec)*SPI_FLASH_SEC_SIZE,(uint32_t *)flash->sec_buff,sector_wr) == SPI_FLASH_RESULT_OK){
+				if( SPI_FLASH_RESULT_OK == spi_flash_write( (base_sec+flash->c_sec)*SPI_FLASH_SEC_SIZE, (uint32_t *)flash->sec_buff, sector_wr) ){
 					flash->wr+= sector_wr;
 					//move extra bytes in buffer from end to start
 					os_memcpy(flash->sec_buff, flash->sec_buff+SPI_FLASH_SEC_SIZE, EXTRA_BYTES);
 					flash->sec_wr=EXTRA_BYTES;
 					flash->c_sec++;
-
 					//if bound-end found file upload is complete
 					if( bound_end != NULL) upload->state = UPLOAD_COMPLETE;
 				}else{
-					upload->state = UPLOAD_FLASH_WRITE_ERROR;
+					upload->state = UPLOAD_ERR_FLASH_WRITE;
 				}
+				upload->f_info->uploaded_bytes = upload->flash->wr;
 				ets_intr_unlock();
 			}
-			if(upload->state != CONTENT_UPLOAD)return;
+			if(upload->state != UPLOAD_IN_PROGRESS)return;
 			if(len > 0) content_upload(content+page_wr, len, upload, bytes_left);
 			break;
 		default:
@@ -221,44 +226,33 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 	}
 }
 
-static void ICACHE_FLASH_ATTR set_upload_info(upload_state_t *upload, char *info)
+static const char ICACHE_FLASH_ATTR *get_upload_state_str(upload_state_t *upload )
 {
+	if(upload == NULL) return empty_str;
+
 	switch(upload->state){
-		case UPLOAD_COMPLETE:
-			ets_snprintf(info,32,"uploaded %d bytes OK",upload->flash->wr);
-			break;
-		case UPLOAD_ERR_NO_INPUT_FILE:
-			ets_snprintf(info,32,"no input file");
-			break;
-		case UPLOAD_ERR_WRONG_FILE_EXT:
-			ets_snprintf(info,32,"wrong file type");
-			break;
-		case UPLOAD_ERR_WRONG_CONTENT:
-			ets_snprintf(info,32,"wrong ContentType");
-			break;
-		case UPLOAD_ERR_FILE_TOO_BIG:
-			ets_snprintf(info,32,"file too big");
-			break;
-		case UPLOAD_FLASH_WRITE_ERROR:
-			ets_snprintf(info,32,"flash write error");
-			break;
-		default:
-			ets_snprintf(info,32,"upload state %d", upload->state);
-			break;
+		case UPLOAD_IN_PROGRESS:   		return "UPLOAD_IN_PROGRESS";
+		case UPLOAD_COMPLETE:   		return "UPLOAD_COMPLETE";
+		case UPLOAD_ERR_NO_INPUT_FILE:  return "UPLOAD_ERR_NO_INPUT_FILE";
+		case UPLOAD_ERR_WRONG_FILE_EXT: return "UPLOAD_ERR_WRONG_FILE_EXT";
+		case UPLOAD_ERR_WRONG_CONTENT:  return "UPLOAD_ERR_WRONG_CONTENT";
+		case UPLOAD_ERR_FILE_TOO_BIG: 	return "UPLOAD_ERR_FILE_TOO_BIG";
+		case UPLOAD_ERR_FLASH_WRITE: 	return "UPLOAD_ERR_FLASH_WRITE";
+		default: break;
 	}
-	js_upload_info.value = info;
+	return "UPLOAD_STATE_UNKNOWN";
 }
 
 static void ICACHE_FLASH_ATTR resp_upload_info(struct espconn *conn, file_info_t *f_info, upload_state_t *upload)
 {
-	char info[32];
-
 	js_upload_f_ext.value = f_info->accept_file_ext;
 	js_upload_c_type.value = f_info->accept_cont_type;
 	js_upload_sec.value = f_info->base_sec;
 	js_upload_max_size.value = f_info->max_f_size;
 
-	if(upload != NULL) set_upload_info(upload, info);
+	js_upload_status.value = get_upload_state_str(upload);
+	js_upload_bytes.value  = (upload != NULL)? upload->flash->wr:0;
+
 	send_json_tree(conn, &js_tree_upload, 256);
 }
 
@@ -287,13 +281,12 @@ void ICACHE_FLASH_ATTR file_upload_callback(struct espconn *conn, void *arg, uin
     	if(upload->boundary == NULL) return resp_http_error(conn);
 
 		upload->f_info = f_info;
-		os_printf("file upload\n");
+		os_printf("file upload...\n");
     }
     content_upload(req->content, req->cont_part_len, upload, req->cont_bytes_left);
 
     if(req->cont_bytes_left == 0){
-    	upload->f_info->upload_size = upload->flash->wr;
-		os_printf("uploaded(%d bytes) %s\n", upload->f_info->upload_size, (upload->state==UPLOAD_COMPLETE)?("OK"):("ERR"));
+		os_printf("uploaded(%d bytes) %s\n", upload->f_info->uploaded_bytes, (upload->state==UPLOAD_COMPLETE)?("OK"):("ERR"));
 		resp_upload_info(conn, f_info, upload);
 		os_free(upload->flash);
 		os_free(upload);
@@ -304,7 +297,6 @@ void ICACHE_FLASH_ATTR file_upload_callback(struct espconn *conn, void *arg, uin
 
 static void ICACHE_FLASH_ATTR resp_upgrade_info(struct espconn *conn, upload_state_t *upload)
 {
-	char info[32];
 	uint8_t fw_bin;
 	enum flash_size_map flash_map;
 
@@ -316,7 +308,7 @@ static void ICACHE_FLASH_ATTR resp_upgrade_info(struct espconn *conn, upload_sta
 	switch(flash_map){
 		case FLASH_SIZE_4M_MAP_256_256:
 		case FLASH_SIZE_2M:
-			js_upgrade_flash_map.value = "FOTA not supported";
+			js_upgrade_flash_map.value = "FOTA_NOT_SUPPORTED";
 			break;
 		case FLASH_SIZE_8M_MAP_512_512:
 			js_upgrade_flash_map.value = "FLASH_SIZE_8M_MAP_512_512";
@@ -334,9 +326,12 @@ static void ICACHE_FLASH_ATTR resp_upgrade_info(struct espconn *conn, upload_sta
 			js_upgrade_flash_map.value = "FLASH_SIZE_32M_MAP_1024_1024";
 			break;
 		default:
+			js_upgrade_flash_map.value = "FLASH_SIZE_MAP_UNKNOWN";
 			break;
 	}
-	if(upload != NULL) set_upload_info(upload, info);
+	js_upload_status.value = get_upload_state_str(upload);
+	js_upload_bytes.value  = (upload != NULL)?upload->flash->wr:0;
+
 	send_json_tree(conn, &js_tree_upgrade, 256);
 }
 
@@ -348,28 +343,16 @@ void ICACHE_FLASH_ATTR firmware_upgrade_callback(struct espconn *conn, void *arg
 	static upload_state_t *upload;
 	enum flash_size_map flash_map;
     char *param, *action;
+    void (*before_upgrade)(void) = arg;
+    static os_timer_t reboot_timer;
 	uint8_t fw_bin;
 
     if(req == NULL) return resp_http_error(conn);
 
-    if(req->type == TYPE_GET && req->query == NULL) //return upgrade info
+    // GET request - return upgrade info
+    if(req->type == TYPE_GET && req->query == NULL)
     	return resp_upgrade_info(conn, upload);
-
-    if(req->type == TYPE_GET && req->query != NULL){
-  		param=strtok((char*)req->query,"&");     //read request query string
-  		if( os_memcmp(param,"action=",7) == 0 ){
-  			action = strchr(param,'=')+1;
-
-  			if( os_strcmp(action,"reboot") == 0){ //FOTA reboot
-  				os_printf("FOTA reboot\n");
-  				resp_http_ok(conn);
-  				system_upgrade_flag_set(UPGRADE_FLAG_FINISH);
-  				system_upgrade_reboot();
-  				return;
-  			}
-  		}
-    }
-
+    // POST request - firmware upload
     if( req->type == TYPE_POST  && req->read_state == REQ_GOT_HEADER ){
     	f_info.accept_file_ext = ".bin";
     	f_info.accept_cont_type = "application/octet-stream";
@@ -380,8 +363,7 @@ void ICACHE_FLASH_ATTR firmware_upgrade_callback(struct espconn *conn, void *arg
 		switch(flash_map){
 			case FLASH_SIZE_4M_MAP_256_256:
 			case FLASH_SIZE_2M:
-				resp_http_error(conn); //FOTA not supported
-				return;
+				return resp_http_error(conn); //FOTA not supported
 			case FLASH_SIZE_8M_MAP_512_512:
 			case FLASH_SIZE_16M_MAP_512_512:
 			case FLASH_SIZE_32M_MAP_512_512:
@@ -394,8 +376,10 @@ void ICACHE_FLASH_ATTR firmware_upgrade_callback(struct espconn *conn, void *arg
 				f_info.max_f_size = 256*SPI_FLASH_SEC_SIZE;
 				break;
 			default:
-				break;
+				return resp_http_error(conn); //flash map unknown
 		}
+		// execute before upgrade action if specified
+		if( before_upgrade != NULL ) before_upgrade();
 
     	upload = (upload_state_t*)os_zalloc(sizeof(upload_state_t));
     	if(upload == NULL) return resp_http_error(conn);
@@ -410,11 +394,20 @@ void ICACHE_FLASH_ATTR firmware_upgrade_callback(struct espconn *conn, void *arg
     }
     content_upload(req->content, req->cont_part_len, upload, req->cont_bytes_left);
 
+    //request processing finished
     if(req->cont_bytes_left == 0){
-    	upload->f_info->upload_size = upload->flash->wr;
-		os_printf("firmware upload(%d bytes) %s\n", upload->f_info->upload_size, (upload->state==UPLOAD_COMPLETE)?("OK"):("ERR"));
+		os_printf("firmware uploaded(%d bytes) %s\n", upload->f_info->uploaded_bytes, (upload->state==UPLOAD_COMPLETE)?("OK"):("ERR"));
 		resp_upgrade_info(conn, upload);
 		os_free(upload->flash);
 		os_free(upload);
+		//reboot to new firmware if firmware upload is complete
+		if( upload->state == UPLOAD_COMPLETE ){
+			os_printf("FOTA reboot...\n");
+			system_upgrade_flag_set(UPGRADE_FLAG_FINISH);
+			//delayed reboot - let ESP send response to client before restart
+			os_timer_disarm(&reboot_timer);
+			os_timer_setfn(&reboot_timer, (os_timer_func_t *)system_upgrade_reboot, NULL);
+			os_timer_arm(&reboot_timer, 3000, 0);
+		}
     }
 }

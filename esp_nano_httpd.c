@@ -113,16 +113,16 @@ void ICACHE_FLASH_ATTR send_http_response(struct espconn *conn, const char *code
 	os_free(http_resp_buff);
 }
 
-void ICACHE_FLASH_ATTR resp_http_ok(struct espconn *conn) {
+void ICACHE_FLASH_ATTR resp_http_ok(struct espconn *conn){
 	send_http_response(conn, "200 OK","text/html",NULL,0);
 }
 
-void ICACHE_FLASH_ATTR resp_http_404(struct espconn *conn) {
+void ICACHE_FLASH_ATTR resp_http_404(struct espconn *conn){
 	const char content[] = "Error 404 Not Found";
 	send_http_response(conn, "404 Not Found","text/html",content,strlen(content));
 }
 
-void ICACHE_FLASH_ATTR resp_http_error(struct espconn *conn) {
+void ICACHE_FLASH_ATTR resp_http_error(struct espconn *conn){
 	const char content[] = "500 Internal Error";
 	send_http_response(conn, "500 Internal Error", "text/html",content,strlen(content));
 }
@@ -133,6 +133,14 @@ void ICACHE_FLASH_ATTR send_html(struct espconn *conn, void *html, uint32_t len)
 
 void ICACHE_FLASH_ATTR send_text(struct espconn *conn, void *txt, uint32_t len){
 	send_http_response(conn, "200 OK","text/plain", txt, len);
+}
+
+void ICACHE_FLASH_ATTR send_css(struct espconn *conn, void *css, uint32_t len){
+	send_http_response(conn, "200 OK","text/css", css, len);
+}
+
+void ICACHE_FLASH_ATTR send_svg(struct espconn *conn, void *svg, uint32_t len){
+	send_http_response(conn, "200 OK","image/svg+xml", svg, len);
 }
 
 static int ICACHE_FLASH_ATTR json_putchar(int c)
@@ -165,7 +173,8 @@ void ICACHE_FLASH_ATTR send_json_tree(struct espconn *conn, struct jsontree_obje
 	http_resp_free_after_tx(json_cache.buff);
 }
 
-static int ICACHE_FLASH_ATTR parse_http_request_header(http_request_t *req, char *data, uint32_t len){
+static int ICACHE_FLASH_ATTR parse_http_request_header(http_request_t *req, char *data, uint32_t len)
+{
 	char *type, *path, *query, *http_ver;
 	char *head_attr, *content_type, *content_len, *req_content;
 

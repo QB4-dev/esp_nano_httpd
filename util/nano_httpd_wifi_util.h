@@ -27,7 +27,7 @@ SOFTWARE.*/
 
 /*
 This callback is used to configure ESP8266 WiFi settings.
-To use it add something like that in esp_nano_httpd URL table:
+To use it add something like below in esp_nano_httpd URL table:
 const http_callback_t url_cfg[] = {
 	{"/wifi", wifi_callback, NULL, 0},
 	{0,0,0,0}

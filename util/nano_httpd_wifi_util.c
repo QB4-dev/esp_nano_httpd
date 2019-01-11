@@ -68,9 +68,8 @@ static void ICACHE_FLASH_ATTR resp_wifi_conn_status(void *arg)
 {
 	static struct station_config station_config;
 	static struct ip_info ip_config;
-	struct jsontree_context js_ctx;
 	struct espconn *conn = arg;
-	static char ip_addr[20];
+	static char ip_addr[32];
 	uint8_t st;
 	const char *conn_status[]= {
 		"IDLE",
@@ -134,13 +133,16 @@ void ICACHE_FLASH_ATTR wifi_callback(struct espconn *conn, void *arg, uint32_t l
 		}
     } else if(req->type == TYPE_POST){
 		if(req->content == NULL) return resp_http_error(conn);
+
 		/* in request content We expect serialized input form query like: ssid=MY_SSID&passwd=MY_PASSWD
 		Use strtok to divide query into tokens*/
 		param=strtok(req->content,"&");
 		do {
-			if( os_memcmp(param,"ssid=",5) == 0 )         //ssid value found
+			if(param == NULL) //empty parameter
+				continue;
+			else if( os_memcmp(param,"ssid=",5) == 0 ) 	 //ssid
 				ets_strncpy(station_conf.ssid, strchr(param,'=')+1,32);
-			else if( os_memcmp(param,"passwd=",7) == 0 )  //password value found
+			else if( os_memcmp(param,"passwd=",7) == 0 ) //password
 				ets_strncpy(station_conf.password, strchr(param,'=')+1,64);
 		} while( (param=strtok(NULL,"&")) != NULL);
 		//now connect to network
@@ -148,6 +150,7 @@ void ICACHE_FLASH_ATTR wifi_callback(struct espconn *conn, void *arg, uint32_t l
 		wifi_station_disconnect();
 		wifi_station_set_config_current(&station_conf);
 		wifi_station_connect();
+
     }
     resp_wifi_conn_status(conn);
 }

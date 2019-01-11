@@ -114,7 +114,7 @@ static uint8_t* ICACHE_FLASH_ATTR find_bound(uint8_t *data, uint32_t len, const 
 
 
 
-static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upload_state_t *upload, uint32_t bytes_left)
+static void ICACHE_FLASH_ATTR req_content_upload(uint8_t *content, uint32_t len, upload_state_t *upload, uint32_t bytes_left)
 {
 	char *tok, *cont_disposition, *input_name, *f_name, *content_type;
     uint8_t *p, *bound_end, *file_cont;
@@ -128,7 +128,7 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 			if( bound_end != NULL){
 				rx = bound_end - content;  //count processed bytes
 				upload->state = GET_CONTENT_INFO;
-				if(rx < len) content_upload(bound_end, len-rx, upload, bytes_left);
+				if(rx < len) req_content_upload(bound_end, len-rx, upload, bytes_left);
 			}
 			break;
 		case GET_CONTENT_INFO:
@@ -168,7 +168,7 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 				return;
 			}
 			//skip content type check when: content type not specified/"application/octet-stream" - general binary data
-			if( upload->f_info->accept_cont_type == NULL || strcmp(content_type, "application/octet-stream" ) != 0 ){
+			if( upload->f_info->accept_cont_type != NULL && strcmp(content_type, "application/octet-stream" ) != 0 ){
 				//check content type
 				if( strstr(content_type, upload->f_info->accept_cont_type) == 0 ){
 					os_printf("Error: content type mismatch %s != %s\n", content_type, upload->f_info->accept_cont_type);
@@ -177,7 +177,7 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 				}
 			}
 			upload->state = UPLOAD_IN_PROGRESS;
-			if(rx < len) content_upload(file_cont, len-rx, upload, bytes_left);
+			if(rx < len) req_content_upload(file_cont, len-rx, upload, bytes_left);
 			break;
 		case UPLOAD_IN_PROGRESS:
 			page_wr = (flash->sec_wr+len < SEC_BUFF_LEN)?(len):(SEC_BUFF_LEN - flash->sec_wr);
@@ -210,7 +210,7 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 					os_memcpy(flash->sec_buff, flash->sec_buff+SPI_FLASH_SEC_SIZE, EXTRA_BYTES);
 					flash->sec_wr=EXTRA_BYTES;
 					flash->c_sec++;
-					//if bound-end found file upload is complete
+					// if bound-end found file upload is complete
 					if( bound_end != NULL) upload->state = UPLOAD_COMPLETE;
 				}else{
 					upload->state = UPLOAD_ERR_FLASH_WRITE;
@@ -219,7 +219,7 @@ static void ICACHE_FLASH_ATTR content_upload(uint8_t *content, uint32_t len, upl
 				ets_intr_unlock();
 			}
 			if(upload->state != UPLOAD_IN_PROGRESS)return;
-			if(len > 0) content_upload(content+page_wr, len, upload, bytes_left);
+			if(len > 0) req_content_upload(content+page_wr, len, upload, bytes_left);
 			break;
 		default:
 			break;
@@ -261,14 +261,18 @@ void ICACHE_FLASH_ATTR file_upload_callback(struct espconn *conn, void *arg, uin
 {
 	http_request_t *req = conn->reverse;
 	file_info_t *f_info = arg;
+	upload_state_t *upload;
 
-	static upload_state_t *upload;
-
-    if(req == NULL || f_info == NULL )
+    if(req != NULL || f_info != NULL )
+    	upload=(upload_state_t *)req->prv_data;
+    else
     	return resp_http_error(conn);
 
     if(req->type == TYPE_GET )
     	return resp_upload_info(conn, f_info, upload);
+
+    if(req->type != TYPE_POST )
+    	return resp_http_error(conn);
 
     if( req->read_state == REQ_GOT_HEADER ){
     	upload = (upload_state_t*)os_zalloc(sizeof(upload_state_t));
@@ -281,9 +285,10 @@ void ICACHE_FLASH_ATTR file_upload_callback(struct espconn *conn, void *arg, uin
     	if(upload->boundary == NULL) return resp_http_error(conn);
 
 		upload->f_info = f_info;
+		req->prv_data = upload;
 		os_printf("file upload...\n");
     }
-    content_upload(req->content, req->cont_part_len, upload, req->cont_bytes_left);
+    req_content_upload(req->content, req->cont_chunk_len, upload, req->cont_bytes_left);
 
     if(req->cont_bytes_left == 0){
 		os_printf("uploaded(%d bytes) %s\n", upload->f_info->uploaded_bytes, (upload->state==UPLOAD_COMPLETE)?("OK"):("ERR"));
@@ -347,15 +352,23 @@ void ICACHE_FLASH_ATTR firmware_upgrade_callback(struct espconn *conn, void *arg
     static os_timer_t reboot_timer;
 	uint8_t fw_bin;
 
-    if(req == NULL) return resp_http_error(conn);
+    if(req == NULL)
+    	return resp_http_error(conn);
 
-    // GET request - return upgrade info
+    //GET request - return upgrade info
     if(req->type == TYPE_GET && req->query == NULL)
     	return resp_upgrade_info(conn, upload);
-    // POST request - firmware upload
-    if( req->type == TYPE_POST  && req->read_state == REQ_GOT_HEADER ){
+    //POST request - firmware upload
+    if(req->type != TYPE_POST )
+      	return resp_http_error(conn);
+
+    if( req->read_state == REQ_GOT_HEADER ){
+    	//stop if another firmware upload not finished
+    	if(upload != NULL )
+    		return resp_http_error(conn);
+
     	f_info.accept_file_ext = ".bin";
-    	f_info.accept_cont_type = "application/octet-stream";
+    	f_info.accept_cont_type = NULL;
     	fw_bin    = system_upgrade_userbin_check();
     	flash_map = system_get_flash_size_map();
 		os_printf("fw app bin: %s upgrade flash map %d\n", fw_bin?"APP1":"APP2", flash_map);
@@ -378,7 +391,7 @@ void ICACHE_FLASH_ATTR firmware_upgrade_callback(struct espconn *conn, void *arg
 			default:
 				return resp_http_error(conn); //flash map unknown
 		}
-		// execute before upgrade action if specified
+		//execute before upgrade action if specified
 		if( before_upgrade != NULL ) before_upgrade();
 
     	upload = (upload_state_t*)os_zalloc(sizeof(upload_state_t));
@@ -392,7 +405,7 @@ void ICACHE_FLASH_ATTR firmware_upgrade_callback(struct espconn *conn, void *arg
 
 		upload->f_info = &f_info;
     }
-    content_upload(req->content, req->cont_part_len, upload, req->cont_bytes_left);
+    req_content_upload(req->content, req->cont_chunk_len, upload, req->cont_bytes_left);
 
     //request processing finished
     if(req->cont_bytes_left == 0){
@@ -402,12 +415,12 @@ void ICACHE_FLASH_ATTR firmware_upgrade_callback(struct espconn *conn, void *arg
 		os_free(upload);
 		//reboot to new firmware if firmware upload is complete
 		if( upload->state == UPLOAD_COMPLETE ){
-			os_printf("FOTA reboot...\n");
 			system_upgrade_flag_set(UPGRADE_FLAG_FINISH);
 			//delayed reboot - let ESP send response to client before restart
+			os_printf("FOTA reboot...\n");
 			os_timer_disarm(&reboot_timer);
 			os_timer_setfn(&reboot_timer, (os_timer_func_t *)system_upgrade_reboot, NULL);
-			os_timer_arm(&reboot_timer, 3000, 0);
+			os_timer_arm(&reboot_timer, 1000, 0);
 		}
     }
 }

@@ -18,47 +18,15 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.*/
 
-#ifndef USER_NANO_HTTPD_FILE_UPLOAD_H_
-#define USER_NANO_HTTPD_FILE_UPLOAD_H_
+#ifndef ESP_NANO_HTTPD_FOTA_H_
+#define ESP_NANO_HTTPD_FOTA_H_
 
-#include "../esp_nano_httpd/esp_nano_httpd.h"
+#include "../esp_nano_httpd.h"
 #include <os_type.h>
 
 /*
 Description:
- - file_upload_callback is used to upload any file from web browser to ESP flash memory.
-
-	You should define file info object like:
-
-	file_info_t wav_file = {
-		.accept_file_ext  = ".wav",				//accepted file extension
-		.accept_cont_type = "audio",			//accepted content type
-		.base_sec =   512,					//start sector in flash memory for uploaded file write
-		.max_f_size = 128*SPI_FLASH_SEC_SIZE	//max length in bytes in flash memory for uploaded file
-	};
-
-	and then connect it to file upload callback:
-	const http_callback_t url_cfg[] = {
-		{"/file_upload", file_upload_callback, &wav_file, 0 },
-		{0,0,0,0}
-	};
-
-	Now it is possible to upload files from file input in web browser to ESP flash memory
-
-	Supported actions(CGI like) for javascript  xhttp requests:
-	GET  request: /file_upload		return file upload info:
-
-	Example response data(json format):
-	{
-		"file_extension":".wav",
-		"ContentType":"audio",
-		"flash_sector":512,
-		"max_size":524288,
-		"upload_status":"",
-		"upload_bytes":0
-	}
-
- - firmware_upgrade_callback is used to provide Firmware Over the Air feature.
+ - firmware_upgrade_callback is used to provide Firmware Over the Air(FOTA) feature.
 
 	All You need to do is to connect this calback to URL like:
 	const http_callback_t url_cfg[] = {
@@ -94,15 +62,6 @@ Description:
 	UPLOAD_STATE_UNKNOWN
 */
 
-typedef struct {
-	const char *accept_file_ext;
-	const char *accept_cont_type;
-	uint16_t base_sec;
-	uint32_t uploaded_bytes;
-	uint32_t max_f_size;
-} file_info_t;
-
-void file_upload_callback(struct espconn *conn, void *arg, uint32_t len);
 void firmware_upgrade_callback(struct espconn *conn, void *arg, uint32_t len);
 
-#endif /* USER_NANO_HTTPD_FILE_UPLOAD_H_ */
+#endif /* ESP_NANO_HTTPD_FOTA_H_ */

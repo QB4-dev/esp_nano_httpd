@@ -19,8 +19,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.*/
 
 
-#ifndef USER_NANO_HTTPD_WIFI_UTIL_H_
-#define USER_NANO_HTTPD_WIFI_UTIL_H_
+#ifndef ESP_NANO_HTTPD_WIFI_UTIL_H_
+#define ESP_NANO_HTTPD_WIFI_UTIL_H_
 
 #include <c_types.h>
 #include <user_interface.h>
@@ -53,4 +53,4 @@ Example response data(json format):
 */
 void wifi_callback(struct espconn *conn, void *arg, uint32_t len);
 
-#endif /* USER_NANO_HTTPD_WIFI_UTIL_H_ */
+#endif /* ESP_NANO_HTTPD_WIFI_UTIL_H_ */

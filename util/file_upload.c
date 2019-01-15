@@ -18,14 +18,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.*/
 
+#include "file_upload.h"
+
 #include <ets_sys.h>
 #include <osapi.h>
 #include <spi_flash.h>
 #include <mem.h>
 #include <json/jsontree.h>
 #include <upgrade.h>
+#include "firmware_upgrade.h"
 
-#include "nano_httpd_file_upload.h"
 
 static const char empty_str[] = "";
 static struct jsontree_string js_upload_f_ext		= JSONTREE_STRING(empty_str);

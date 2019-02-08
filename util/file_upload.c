@@ -115,7 +115,6 @@ static uint8_t* ICACHE_FLASH_ATTR find_bound(uint8_t *data, uint32_t len, const 
 }
 
 
-
 static void ICACHE_FLASH_ATTR req_content_upload(uint8_t *content, uint32_t len, upload_state_t *upload, uint32_t bytes_left)
 {
 	char *tok, *cont_disposition, *input_name, *f_name, *content_type;

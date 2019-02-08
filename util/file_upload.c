@@ -164,13 +164,13 @@ static void ICACHE_FLASH_ATTR req_content_upload(uint8_t *content, uint32_t len,
 				return;
 			}
 			//check file extension
-			if( strstr(f_name, upload->f_info->accept_file_ext) == NULL ){
+			if( upload->f_info->accept_file_ext && strstr(f_name, upload->f_info->accept_file_ext) == NULL ){
 				os_printf("error: wrong file type != %s \n", upload->f_info->accept_file_ext);
 				upload->state = UPLOAD_ERR_WRONG_FILE_EXT;
 				return;
 			}
 			//skip content type check when: content type not specified/"application/octet-stream" - general binary data
-			if( upload->f_info->accept_cont_type != NULL && strcmp(content_type, "application/octet-stream" ) != 0 ){
+			if( upload->f_info->accept_cont_type && strcmp(content_type, "application/octet-stream" ) != 0 ){
 				//check content type
 				if( strstr(content_type, upload->f_info->accept_cont_type) == 0 ){
 					os_printf("Error: content type mismatch %s != %s\n", content_type, upload->f_info->accept_cont_type);

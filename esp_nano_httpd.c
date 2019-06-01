@@ -178,7 +178,8 @@ void ICACHE_FLASH_ATTR send_json_tree(struct espconn *conn, struct jsontree_obje
 	struct jsontree_context js_ctx;
 
 	json_cache.buff = (char *)os_zalloc(cache_size);
-	if(json_cache.buff == NULL) return resp_http_error(conn);
+	if(json_cache.buff == NULL)
+		return resp_http_error(conn);
 
 	json_cache.size=cache_size;
 	json_cache.bytes=0;
@@ -195,7 +196,8 @@ static int ICACHE_FLASH_ATTR parse_request_header(http_request_t *req, char *dat
 	char *type, *path, *query, *http_ver;
 	char *head_attr, *content_type, *content_len, *req_content;
 
-	if( data == NULL ) goto unknown_request;
+	if( data == NULL )
+		goto unknown_request;
 
 	//find header attributes
 	head_attr = strstr(data,"\r\n");
@@ -277,7 +279,8 @@ static void ICACHE_FLASH_ATTR receive_cb(void *arg, char *pdata, unsigned short 
 	NANO_HTTPD_DBG("got new request. req len %d Free heap size: %d\n", len, system_get_free_heap_size());
 	NANO_HTTPD_DBG_REQ("request:\n%s\n", pdata);
 
-	if(conn == NULL || pdata == NULL) return;
+	if(conn == NULL || pdata == NULL)
+		return;
 
 	req = (http_request_t*)conn->reverse;
 	if( req == NULL ) return;

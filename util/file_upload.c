@@ -89,7 +89,8 @@ static uint8_t* ICACHE_FLASH_ATTR get_bound(const char *content_type)
     static char boundary[72];
     uint8_t *bound;
 
-    if(content_type == NULL) return boundary;
+    if(content_type == NULL)
+    	return boundary;
 
 	bound = strstr(content_type,"boundary=");
 	if( bound != NULL && strstr(content_type,"multipart/form-data;") != NULL ){
@@ -119,7 +120,7 @@ static void ICACHE_FLASH_ATTR req_content_upload(uint8_t *content, uint32_t len,
 {
 	char *tok, *cont_disposition, *input_name, *f_name, *content_type;
     uint8_t *p, *bound_end, *file_cont;
-	uint32_t rx, page_wr, sector_wr;
+	uint32_t rx, page_wr, sector_wr, flash_addr;
 	flash_upload_t *flash = upload->flash;
 	uint16_t base_sec = upload->f_info->base_sec;
 
@@ -169,7 +170,7 @@ static void ICACHE_FLASH_ATTR req_content_upload(uint8_t *content, uint32_t len,
 				return;
 			}
 			//skip content type check when: content type not specified/"application/octet-stream" - general binary data
-			if( upload->f_info->accept_cont_type && strcmp(content_type, "application/octet-stream" ) != 0 ){
+			if( upload->f_info->accept_cont_type && !!strcmp(content_type, "application/octet-stream" ) ){
 				//check content type
 				if( strstr(content_type, upload->f_info->accept_cont_type) == 0 ){
 					os_printf("Error: content type mismatch %s != %s\n", content_type, upload->f_info->accept_cont_type);
@@ -192,7 +193,9 @@ static void ICACHE_FLASH_ATTR req_content_upload(uint8_t *content, uint32_t len,
 			}
 
 			if(flash->sec_wr == SEC_BUFF_LEN || bytes_left == 0){ //page buffer full or no more req bytes left
+				ets_intr_lock();
 				spi_flash_erase_sector(base_sec+flash->c_sec); //erase new sector
+				ets_intr_unlock();
 
 				bound_end = find_bound(flash->sec_buff, SEC_BUFF_LEN, upload->boundary); //try find end boundary
 				if( bound_end != NULL){ //got bound end
@@ -204,8 +207,9 @@ static void ICACHE_FLASH_ATTR req_content_upload(uint8_t *content, uint32_t len,
 				os_printf("upload: sec %x/%db %db left\n", base_sec+flash->c_sec, sector_wr, bytes_left);
 
 				//flash sector write
+				flash_addr = (base_sec+flash->c_sec)*SPI_FLASH_SEC_SIZE;
 				ets_intr_lock();
-				if( SPI_FLASH_RESULT_OK == spi_flash_write( (base_sec+flash->c_sec)*SPI_FLASH_SEC_SIZE, (uint32_t *)flash->sec_buff, sector_wr) ){
+				if( SPI_FLASH_RESULT_OK == spi_flash_write(flash_addr, (uint32_t *)flash->sec_buff, sector_wr) ){
 					flash->wr+= sector_wr;
 					//move extra bytes in buffer from end to start
 					os_memcpy(flash->sec_buff, flash->sec_buff+SPI_FLASH_SEC_SIZE, EXTRA_BYTES);
@@ -216,10 +220,10 @@ static void ICACHE_FLASH_ATTR req_content_upload(uint8_t *content, uint32_t len,
 				}else{
 					upload->state = UPLOAD_ERR_FLASH_WRITE;
 				}
-				upload->f_info->uploaded_bytes = upload->flash->wr;
 				ets_intr_unlock();
+				upload->f_info->uploaded_bytes = upload->flash->wr;
 			}
-			if(upload->state != UPLOAD_IN_PROGRESS)return;
+			if(upload->state != UPLOAD_IN_PROGRESS) return;
 			if(len > 0) req_content_upload(content+page_wr, len, upload, bytes_left);
 			break;
 		default:
@@ -279,7 +283,7 @@ void ICACHE_FLASH_ATTR file_upload_callback(struct espconn *conn, void *arg, uin
     	upload = (upload_state_t*)os_zalloc(sizeof(upload_state_t));
     	if(upload == NULL) return resp_http_error(conn);
 
-		upload->flash  = (flash_upload_t*)os_zalloc(sizeof(flash_upload_t));
+		upload->flash = (flash_upload_t*)os_zalloc(sizeof(flash_upload_t));
 		if(upload->flash == NULL) return resp_http_error(conn);
 
     	upload->boundary = get_bound(req->content_type);
@@ -349,7 +353,7 @@ void ICACHE_FLASH_ATTR firmware_upgrade_callback(struct espconn *conn, void *arg
 	static upload_state_t *upload;
 	enum flash_size_map flash_map;
     char *param, *action;
-    void (*before_upgrade)(void) = arg;
+    void (*pre_upgrade_func)(void) = arg;
     static os_timer_t reboot_timer;
 	uint8_t fw_bin;
 
@@ -393,7 +397,7 @@ void ICACHE_FLASH_ATTR firmware_upgrade_callback(struct espconn *conn, void *arg
 				return resp_http_error(conn); //flash map unknown
 		}
 		//execute before upgrade action if specified
-		if( before_upgrade != NULL ) before_upgrade();
+		if( pre_upgrade_func != NULL ) pre_upgrade_func();
 
     	upload = (upload_state_t*)os_zalloc(sizeof(upload_state_t));
     	if(upload == NULL) return resp_http_error(conn);

@@ -399,9 +399,9 @@ devices visible as:
 	device 1: "MY-ESP-DEV-9FAE"
 	device 2: "MY-ESP-DEV-A3C2"
 	... */
-void ICACHE_FLASH_ATTR esp_nano_httpd_init_AP(uint8_t wifi_mode, const char *AP_ssid)
+void ICACHE_FLASH_ATTR esp_nano_httpd_init_AP(uint8_t wifi_mode, const char *AP_ssid, const char *AP_pass)
 {
-	struct softap_config ap_config;
+	struct softap_config ap_config = {0};
 	char mac[6];
 
 	if(wifi_mode == SOFTAP_MODE || wifi_mode == STATIONAP_MODE){
@@ -409,10 +409,10 @@ void ICACHE_FLASH_ATTR esp_nano_httpd_init_AP(uint8_t wifi_mode, const char *AP_
 			wifi_softap_get_config(&ap_config);
 
 			ets_snprintf(ap_config.ssid,32,"%s-%02X%02X", AP_ssid, mac[4],mac[5]);
-			ap_config.password[0] = 0;
+			ets_strncpy(ap_config.password, AP_pass?AP_pass:"",64);
 			ap_config.ssid_len = strlen(ap_config.ssid);
 			ap_config.channel = 1;
-			ap_config.authmode = AUTH_OPEN;
+			ap_config.authmode = AP_pass?AUTH_WPA_WPA2_PSK:AUTH_OPEN;
 			ap_config.ssid_hidden = 0;
 			ap_config.max_connection = 4;
 			ap_config.beacon_interval = 100;

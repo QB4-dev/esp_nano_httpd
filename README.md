@@ -70,7 +70,7 @@ esp_nano_httpd_register_content(url_conf);
 ```
 and start it when needed:
 ```c
- esp_nano_httpd_init_AP(STATIONAP_MODE, "ESP-LED"); //when used as AP*
+ esp_nano_httpd_init_AP(STATIONAP_MODE, "ESP-LED",NULL); //when used as AP*
 //or
 esp_nano_httpd_init();  //when used as router client
 ```  
@@ -172,12 +172,12 @@ void ICACHE_FLASH_ATTR wifi_config_cb(struct espconn *conn, void *arg, uint32_t 
     char *param;
     
     http_request_t *req = conn->reverse; //get parsed request
-    if(req == NULL)return;
+    if(req == NULL)
+    	return;
     //We only handle POST requests
-    if(req->type != TYPE_POST || req->content == NULL){
-        resp_http_error(conn);
-        return;
-    }
+    if(req->type != TYPE_POST || req->content == NULL)
+       return resp_http_error(conn);
+       
     /* in request content We expect serialized input form query like: ssid=MY_SSID&passwd=MY_PASSWD
     Use strtok to divide query into tokens*/
     param=strtok(req->content,"&");
@@ -189,9 +189,9 @@ void ICACHE_FLASH_ATTR wifi_config_cb(struct espconn *conn, void *arg, uint32_t 
     } while( (param=strtok(NULL,"&")) != NULL);
 
     station_conf.bssid_set = 0;               //do not look for specific router MAC address
-    wifi_station_set_auto_connect(0);		  //disable autoconnect
+    wifi_station_set_auto_connect(0);	      //disable autoconnect
     wifi_station_set_config(&station_conf);   //save new WiFi settings
-    wifi_station_connect();					  //connect to network
+    wifi_station_connect();		      //connect to network
 
     send_html(conn, wifi_connect_html, sizeof(wifi_connect_html)); //show HTML page
 }
@@ -217,7 +217,3 @@ const http_callback_t url_cfg[] = {
 	{0,0,0}
 };
 ```
-
-
-
-
